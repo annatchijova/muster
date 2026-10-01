@@ -9,16 +9,22 @@ for that.
 Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 
 - **Level 1 — `CapacityMarket.sol`**: single-provider capacity position, full
-  lifecycle plus Level 3's delivery-claim/dispute flow. 28/28 tests passing.
+  lifecycle plus Level 3's delivery-claim/dispute flow. 31/31 tests passing.
 - **Level 2 — `CapacityPool.sol`**: fungible, multi-provider capacity pooled
   by domain class, routed FIFO at activation, same Level 3 flow at the
-  per-assignment grain. 32/32 tests passing.
+  per-assignment grain. 34/34 tests passing.
 
-60/60 tests passing total. Deployed and Sourcify-verified on Monad testnet
-(chain id 10143) 2026-10-01 — `CapacityMarket` at
+71/71 tests passing total (including `test/RedTeam.t.sol`'s 6-test
+regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three confirmed
+and fixed findings). A first deploy went to Monad testnet (chain id 10143)
+on 2026-10-01 — `CapacityMarket` at
 `0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c`, `CapacityPool` at
-`0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3`. Not audited. Not deployed to
-mainnet.
+`0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3` — but a same-day red-team pass
+found and fixed three vulnerabilities in the source *after* that deploy;
+**those two addresses still run the vulnerable bytecode** until redeployed.
+Treat them as historical, not current, until `README.md`'s "Live on Monad
+testnet" section says otherwise. Not independently audited beyond this
+project's own red-team pass. Not deployed to mainnet.
 
 **What "deployed" means here, precisely, so it isn't overclaimed:** the
 bytecode is live and the source is verified exact-match — anyone can read
@@ -85,7 +91,7 @@ ACTIVATED
   │  │                                      SETTLED
   │  │
   │  └─ claimDefault() [SLA missed] ──▶ DEFAULTED
-  │                                       (collateral → buyer)
+  │                                       (price + collateral → buyer)
 ```
 
 `expire()` also accepts a position still in `Listed` (never reserved) once
@@ -104,7 +110,11 @@ differs between the two originating states. All transitions are one-way;
    Test: `test_transfer_preserves_window_sla_and_collateral`.
 4. **Collateral and price are each paid out exactly once per position,**
    by exactly one of `settle`, `finalizeDelivery`, `resolveDisputeByTimeout`,
-   `claimDefault`, or `expire` — mutually exclusive by status.
+   `claimDefault`, or `expire` — mutually exclusive by status. `claimDefault`
+   pays out **both** `price` and `collateral` to the buyer; an earlier
+   version paid `collateral` only, leaving `price` permanently stuck — see
+   `docs/SECURITY_AUDIT_2026-10-01.md` finding F1. Test:
+   `test_claimDefault_pays_collateral_and_price_to_buyer_after_SLA_miss`.
 5. **Reentrancy cannot double-pay.** Status is set to its terminal value
    before the external call in `_payout` (checks-effects-interactions).
 6. **Every terminal state has a payout path.** `Settled`, `Expired`,
@@ -112,9 +122,22 @@ differs between the two originating states. All transitions are one-way;
    reached by a function that pays out `price`/`collateral` in the same
    call that sets it — there is no terminal state a position can reach
    that leaves funds with no function able to move them. This invariant
-   was violated twice during this project's own construction (see "Price on
-   expiry" and "Level 3" below) and is now treated as a first-class check,
-   not an implicit assumption.
+   was violated three times during this project's own construction (see
+   "Price on expiry", "Level 3" below, and `docs/SECURITY_AUDIT_2026-10-01.md`
+   finding F1) and is now treated as a first-class check, not an implicit
+   assumption.
+7. **`activationSLA` and `disputeWindow` cannot overflow the checked
+   `uint64` arithmetic that consumes them.** `MAX_DURATION` (365 days,
+   public, identical in both contracts) bounds both fields at the two
+   points they are ever set (`listCapacity`, `contribute`). Before this
+   bound existed, either field could be set near `type(uint64).max` to make
+   `activate`/`claimDelivery`/`dispute` (and their `CapacityPool`
+   equivalents) revert permanently — profitably in `CapacityMarket`
+   (finding F2) or destructively in both contracts (finding F3). Tests:
+   `test_listCapacity_rejects_activationSLA_above_MAX_DURATION`,
+   `test_listCapacity_rejects_disputeWindow_above_MAX_DURATION`,
+   `test_contribute_rejects_activationSLA_above_MAX_DURATION`,
+   `test_contribute_rejects_disputeWindow_above_MAX_DURATION`.
 
 ### Price on expiry — a stated economic rule, not a missing refund
 
@@ -433,9 +456,12 @@ forge build
 forge test
 ```
 
-Last run: 60/60 tests passed (`CapacityMarket.t.sol`: 28, `CapacityPool.t.sol`:
-32). This proves the invariants stated above hold under the specific
-scenarios each test encodes. It does not constitute a security audit, and no
+Last run: 71/71 tests passed (`CapacityMarket.t.sol`: 31,
+`CapacityPool.t.sol`: 34, `RedTeam.t.sol`: 6). This proves the invariants
+stated above hold under the specific scenarios each test encodes,
+including the three historical vulnerabilities in
+`docs/SECURITY_AUDIT_2026-10-01.md` staying fixed. It does not constitute an
+independent security audit beyond this project's own red-team pass, and no
 fuzzing or formal verification has been run yet.
 
 Note: `foundry.toml` sets `via_ir = true`. The `CapacityPosition`/`Assignment`

@@ -125,6 +125,13 @@ contract CapacityPool {
     error DeadlinePassed();
     error DisputeWindowOpen();
     error DisputeWindowClosed();
+    error DurationTooLong();
+
+    /// @notice Upper bound on `activationSLA` and `disputeWindow`, enforced
+    /// at `contribute`. Mirrors `CapacityMarket.MAX_DURATION` — see that
+    /// constant's NatSpec and docs/SECURITY_AUDIT_2026-10-01.md findings
+    /// F2/F3 for why an unbounded duration here is exploitable.
+    uint64 public constant MAX_DURATION = 365 days;
 
     modifier reservationInStatus(uint256 reservationId, ReservationStatus expected) {
         ReservationStatus actual = reservations[reservationId].status;
@@ -146,6 +153,7 @@ contract CapacityPool {
     function contribute(TermsClass calldata terms, uint256 quantity) external payable returns (bytes32 id) {
         if (terms.validUntil <= terms.validFrom) revert InvalidWindow();
         if (quantity == 0) revert WrongValue();
+        if (terms.activationSLA > MAX_DURATION || terms.disputeWindow > MAX_DURATION) revert DurationTooLong();
         if (msg.value != terms.collateralPerUnit * quantity) revert WrongValue();
 
         id = classId(terms);
@@ -319,10 +327,13 @@ contract CapacityPool {
     }
 
     /// @notice Anyone may trigger default on one assignment once its shared
-    /// deadline has passed without acceptance. Defaulting one slice has no
-    /// effect on sibling assignments from other providers in the same
-    /// reservation — a partial miss is a partial default, not a whole-
-    /// reservation failure.
+    /// deadline has passed without acceptance. Both `collateral` (the
+    /// penalty) and `price` (refunded — no service was rendered for this
+    /// slice) return to the buyer. Defaulting one slice has no effect on
+    /// sibling assignments from other providers in the same reservation —
+    /// a partial miss is a partial default, not a whole-reservation
+    /// failure. Earlier drafts paid `collateral` only, leaving `price`
+    /// permanently stuck — see docs/SECURITY_AUDIT_2026-10-01.md finding F1.
     function claimAssignmentDefault(uint256 reservationId, uint256 assignmentIndex)
         external
         reservationInStatus(reservationId, ReservationStatus.Activated)
@@ -335,7 +346,7 @@ contract CapacityPool {
         a.status = AssignmentStatus.Defaulted;
         emit AssignmentDefaulted(reservationId, assignmentIndex, a.provider);
 
-        _payout(r.buyer, a.collateral);
+        _payout(r.buyer, a.price + a.collateral);
     }
 
     /// @notice Provider claims one accepted assignment's delivery is

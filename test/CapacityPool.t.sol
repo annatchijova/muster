@@ -147,6 +147,26 @@ contract CapacityPoolTest is Test {
         pool.contribute{value: 1 wei}(terms, 8);
     }
 
+    // --- Duration bound (SECURITY_AUDIT 2026-10-01 findings F2/F3) ----------
+
+    function test_contribute_rejects_activationSLA_above_MAX_DURATION() public {
+        CapacityPool.TermsClass memory poisoned = terms;
+        poisoned.activationSLA = pool.MAX_DURATION() + 1;
+
+        vm.prank(providerA);
+        vm.expectRevert(CapacityPool.DurationTooLong.selector);
+        pool.contribute{value: COLLATERAL_PER_UNIT * 8}(poisoned, 8);
+    }
+
+    function test_contribute_rejects_disputeWindow_above_MAX_DURATION() public {
+        CapacityPool.TermsClass memory poisoned = terms;
+        poisoned.disputeWindow = pool.MAX_DURATION() + 1;
+
+        vm.prank(providerA);
+        vm.expectRevert(CapacityPool.DurationTooLong.selector);
+        pool.contribute{value: COLLATERAL_PER_UNIT * 8}(poisoned, 8);
+    }
+
     function test_reserve_wrong_price_reverts() public {
         _seedThreeProviders();
 
@@ -267,7 +287,10 @@ contract CapacityPoolTest is Test {
         pool.claimAssignmentDefault(reservationId, 1);
 
         assertEq(uint8(_assignmentStatus(reservationId, 1)), uint8(CapacityPool.AssignmentStatus.Defaulted));
-        assertEq(buyer.balance, buyerBalanceBefore + COLLATERAL_PER_UNIT * 2);
+        // No service rendered for this slice: buyer gets both the penalty
+        // (collateral) and a full refund of this slice's price. See
+        // SECURITY_AUDIT 2026-10-01 finding F1 — price used to be stuck.
+        assertEq(buyer.balance, buyerBalanceBefore + PRICE_PER_UNIT * 2 + COLLATERAL_PER_UNIT * 2);
 
         // Assignment 0 (provider A, already accepted) is untouched and still settleable.
         vm.prank(providerA);

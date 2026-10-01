@@ -185,7 +185,7 @@ contract CapacityMarketTest is Test {
 
     // --- Timeout / default path: collateral compensates the buyer -------
 
-    function test_claimDefault_pays_collateral_to_buyer_after_SLA_miss() public {
+    function test_claimDefault_pays_collateral_and_price_to_buyer_after_SLA_miss() public {
         uint256 positionId = _listReserveActivate();
 
         vm.warp(block.timestamp + SLA + 1);
@@ -194,7 +194,10 @@ contract CapacityMarketTest is Test {
         market.claimDefault(positionId);
 
         assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Defaulted));
-        assertEq(buyer.balance, buyerBalanceBefore + COLLATERAL);
+        // No service was rendered: the buyer gets both the penalty
+        // (collateral) and a full refund of price. See SECURITY_AUDIT
+        // 2026-10-01 finding F1 — price used to be left stuck here.
+        assertEq(buyer.balance, buyerBalanceBefore + COLLATERAL + PRICE);
     }
 
     function test_claimDefault_before_deadline_reverts() public {
@@ -281,6 +284,33 @@ contract CapacityMarketTest is Test {
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.InvalidWindow.selector);
         market.listCapacity(DOMAIN, 4, validUntil, validFrom, SLA, DISPUTE_WINDOW, PRICE);
+    }
+
+    // --- Duration bound (SECURITY_AUDIT 2026-10-01 findings F2/F3) ----------
+
+    function test_listCapacity_rejects_activationSLA_above_MAX_DURATION() public {
+        uint64 tooLong = market.MAX_DURATION() + 1;
+
+        vm.prank(provider);
+        vm.expectRevert(CapacityMarket.DurationTooLong.selector);
+        market.listCapacity(DOMAIN, 4, validFrom, validUntil, tooLong, DISPUTE_WINDOW, PRICE);
+    }
+
+    function test_listCapacity_rejects_disputeWindow_above_MAX_DURATION() public {
+        uint64 tooLong = market.MAX_DURATION() + 1;
+
+        vm.prank(provider);
+        vm.expectRevert(CapacityMarket.DurationTooLong.selector);
+        market.listCapacity(DOMAIN, 4, validFrom, validUntil, SLA, tooLong, PRICE);
+    }
+
+    function test_listCapacity_accepts_activationSLA_and_disputeWindow_at_MAX_DURATION() public {
+        uint64 maxDuration = market.MAX_DURATION();
+
+        vm.prank(provider);
+        uint256 positionId =
+            market.listCapacity{value: COLLATERAL}(DOMAIN, 4, validFrom, validUntil, maxDuration, maxDuration, PRICE);
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Listed));
     }
 
     // --- Level 3: delivery claims and disputes -------------------------

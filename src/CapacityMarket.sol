@@ -16,9 +16,11 @@ pragma solidity ^0.8.24;
 ///   3. Transfer preserves the asset: `validUntil`, `activationSLA`, and
 ///      `collateral` are immutable after listing. Transfer changes `buyer`
 ///      only.
-///   4. Collateral is locked at listing and released exactly once, either to
-///      the provider at `settle`/`finalizeDelivery` or to the buyer at
-///      `claimDefault`.
+///   4. Collateral and price are each locked once and released exactly
+///      once: to the provider at `settle`/`finalizeDelivery`, to the buyer
+///      at `claimDefault` (both amounts — no service, no charge) or
+///      `resolveDisputeByTimeout`, or split by `expire` depending on
+///      whether the position was ever reserved.
 ///   5. State transitions are one-way. There is no path back to an earlier
 ///      state, so a stale reference to a position's status is never wrong
 ///      about what remains possible from here.
@@ -109,6 +111,19 @@ contract CapacityMarket {
     error InvalidWindow();
     error DisputeWindowOpen();
     error DisputeWindowClosed();
+    error DurationTooLong();
+
+    /// @notice Upper bound on `activationSLA` and `disputeWindow`, enforced
+    /// at `listCapacity`. Exists solely so `uint64(block.timestamp) +
+    /// duration` in `activate`/`claimDelivery`/`dispute` can never overflow
+    /// uint64 regardless of how far block.timestamp has grown by the time
+    /// those run — 365 days leaves comfortable room under the ~5.8e11-year
+    /// overflow horizon from any realistic timestamp. See
+    /// docs/SECURITY_AUDIT_2026-10-01.md findings F2/F3: before this bound
+    /// existed, a provider could choose a near-`type(uint64).max` duration
+    /// to force those additions to revert forever, either profitably
+    /// (F2) or destructively (F3).
+    uint64 public constant MAX_DURATION = 365 days;
 
     modifier inStatus(uint256 positionId, Status expected) {
         Status actual = positions[positionId].status;
@@ -131,6 +146,7 @@ contract CapacityMarket {
     ) external payable returns (uint256 positionId) {
         if (validUntil <= validFrom) revert InvalidWindow();
         if (quantity == 0) revert WrongValue();
+        if (activationSLA > MAX_DURATION || disputeWindow > MAX_DURATION) revert DurationTooLong();
 
         positionId = nextPositionId++;
         positions[positionId] = CapacityPosition({
@@ -226,7 +242,11 @@ contract CapacityMarket {
     }
 
     /// @notice Anyone may trigger default once the provider missed the
-    /// acknowledgement deadline. Collateral compensates the buyer.
+    /// acknowledgement deadline. Both `collateral` (the penalty) and
+    /// `price` (refunded — no service was rendered) return to the buyer.
+    /// Earlier drafts paid `collateral` only, leaving `price` permanently
+    /// stuck with no other function able to move it — see
+    /// docs/SECURITY_AUDIT_2026-10-01.md finding F1.
     function claimDefault(uint256 positionId) external inStatus(positionId, Status.Activated) {
         CapacityPosition storage p = positions[positionId];
         if (block.timestamp <= p.activationDeadline) revert DeadlineNotPassed();
@@ -234,7 +254,7 @@ contract CapacityMarket {
         p.status = Status.Defaulted;
         emit Defaulted(positionId);
 
-        _payout(p.buyer, p.collateral);
+        _payout(p.buyer, p.price + p.collateral);
     }
 
     /// @notice Provider claims delivery is complete, committing to

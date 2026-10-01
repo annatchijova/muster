@@ -119,22 +119,46 @@ counterparty's. Don't "fix" this with a try/catch that silently drops a
 failed payout — that would turn a liveness gap into a fund-loss bug. The
 real fix is a withdrawal-pattern ledger, planned, not yet built.
 
-**A fund-lock bug was already caught and fixed TWICE in this project, by
-adversarial self-review rather than by a test — read this before touching
-any payout path or adding any new terminal status.** First: the original
-`CapacityMarket.expire()` paid out `collateral` only, dropping `price` for a
-reserved-then-lapsed position — ETH the buyer had already paid had no
-function left that could ever move it. The equivalent gap existed in
+**A fund-lock bug was caught and fixed on this payout path THREE separate
+times in this project — twice by the author's own adversarial self-review,
+once by an external-style red-team pass (`docs/SECURITY_AUDIT_2026-10-01.md`,
+finding F1) that caught what the first two passes missed. Read this before
+touching any payout path or adding any new terminal status.** First: the
+original `CapacityMarket.expire()` paid out `collateral` only, dropping
+`price` for a reserved-then-lapsed position. The equivalent gap existed in
 `CapacityPool.expireReservation()` and in the total absence of a way to
 reclaim a contribution's locked collateral after its window closed
 (`withdrawContribution` didn't exist yet). Second, while building Level 3:
 the first version of `dispute()`/`disputeAssignment()` made `Disputed` a
 true terminal state with **no function at all** that could pay out
-`price`/`collateral` from it — the identical defect class, reached through a
-brand-new state this time instead of an existing one. Fixed by
-`resolveDisputeByTimeout`/`resolveAssignmentDisputeByTimeout` (see the
-Technical README's "Level 3" section for why the default is a refund, not a
-payment to the provider).
+`price`/`collateral` from it. Fixed by
+`resolveDisputeByTimeout`/`resolveAssignmentDisputeByTimeout`. **Third**
+(2026-10-01, red team): `claimDefault`/`claimAssignmentDefault` — present
+since Level 1, never touched by either of the first two fixes — paid
+`collateral` only on the SLA-miss default path, on the *ordinary,
+non-adversarial* failure path (an honestly slow provider), not even
+requiring an attacker. Fixed by paying `price + collateral` to the buyer.
+**The same invariant (8, below) was violated by three different functions
+at three different times; writing the rule down after the first two
+instances did not, by itself, catch the third.** The checklist item this
+invariant produces (Definition of Done, below) is the actual mechanism that
+has to be re-run on every payout-adjacent change — restating the invariant
+in prose is necessary but was not, on its own, sufficient.
+
+Same red-team pass also found and fixed an unrelated root cause: neither
+`activationSLA` nor `disputeWindow` had an upper bound, and both feed a
+checked `uint64` addition (`block.timestamp + duration`) in
+`activate`/`claimDelivery`/`dispute` and their `CapacityPool` equivalents.
+A value near `type(uint64).max` made that addition revert *permanently* —
+profitably for a zero-collateral provider in `CapacityMarket` (the
+counterparty gets to collect `price` via `expire()` once the window lapses,
+having made `activate()` permanently unreachable — findings F2), or with no
+winner in either contract (`Accepted`/`DeliveryClaimed`'s only outbound
+function reverts forever, freezing both `price` and `collateral` — finding
+F3). Fixed by a `MAX_DURATION` constant (365 days) checked at both points
+these fields are ever set. **Any future field that gets added to `uint64(
+block.timestamp) + X` arithmetic needs the same bound, checked at the point
+`X` is set — this is now a standing requirement, not a one-off patch.**
 
 **The lesson, stated as a rule now (invariant 8 above): when adding any new
 status — not just when changing an existing payout function — explicitly
@@ -172,6 +196,16 @@ itself is.
   arbitration-timeout window (after `dispute`). Deliberate simplification —
   one configured duration instead of two — not a sign the two windows must
   always be equal; revisit if a level ever needs them to differ.
+- `MAX_DURATION = 365 days` (both contracts, public constant) bounds
+  `activationSLA` and `disputeWindow`. Not an arbitrary "sounds reasonable"
+  number — it exists purely to keep `block.timestamp + duration` inside
+  `uint64` for any realistic future timestamp (see
+  `docs/SECURITY_AUDIT_2026-10-01.md` findings F2/F3). 365 days was chosen
+  because it comfortably covers this project's own stated SLA range
+  (minutes to days) with headroom to spare, not because it is load-bearing
+  at exactly that value — raising it is safe as long as the new value still
+  leaves enormous headroom under the uint64 overflow horizon; do not remove
+  the check entirely.
 
 ## Build & test
 
@@ -181,13 +215,15 @@ forge test
 ```
 
 A green `forge test` run proves the invariants listed above hold under the
-scenarios in `test/CapacityMarket.t.sol` (28 tests) and
-`test/CapacityPool.t.sol` (32 tests) — 60 total. It is not a security audit
-and does not cover fuzzing, formal verification, or interaction between the
-two contracts (they don't currently call each other, but a future level
-that connects them needs its own test coverage, not an assumption that
-either suite already implies it). Say exactly what a green run covers when
-reporting results, not "tests pass" unscoped.
+scenarios in `test/CapacityMarket.t.sol` (31 tests), `test/CapacityPool.t.sol`
+(34 tests), and `test/RedTeam.t.sol` (6 tests — the regression suite for
+`docs/SECURITY_AUDIT_2026-10-01.md`'s three fixed findings) — 71 total. It
+is not an independent security audit beyond this project's own red-team
+pass, and does not cover fuzzing, formal verification, or interaction
+between the two contracts (they don't currently call each other, but a
+future level that connects them needs its own test coverage, not an
+assumption that either suite already implies it). Say exactly what a green
+run covers when reporting results, not "tests pass" unscoped.
 
 ## License
 
