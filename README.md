@@ -122,13 +122,24 @@ behind a vote. Genuinely trust-minimized adjudication (staking, an appeals
 path, an independent oracle) is the next level, named in the Technical
 README.
 
+**Automated enforcement**: several functions above (`claimDefault`,
+`finalizeDelivery`, `resolveDisputeByTimeout`, and their `CapacityPool`
+equivalents) are deliberately permissionless — anyone can call them once
+their deadline passes — but nothing did so automatically until now.
+`src/CREDeadlineReceiver.sol` is the onchain half of a Chainlink CRE
+integration: a closed dispatcher (six named actions against two immutable
+contract addresses, no arbitrary-calldata forwarding) that Chainlink's
+DON-operated Forwarder calls once it reaches consensus on a report. The
+offchain half (the actual workflow) is next, pending an authenticated CRE
+login.
+
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
-  `src/CapacityPool.sol`).
-- 91/91 tests passing (`test/`), covering all five levels' lifecycles,
-  every invariant violation, and a permanent regression suite for the
-  red-team findings below.
-- Live on Monad testnet with the Level 4 bytecode (single arbitrator, not
-  yet the Level 5 panel — see "Live on Monad testnet" below).
+  `src/CapacityPool.sol`, `src/CREDeadlineReceiver.sol`).
+- 98/98 tests passing (`test/`), covering all five levels' lifecycles,
+  every invariant violation, the CRE receiver's dispatch logic, and a
+  permanent regression suite for the red-team findings below.
+- Live on Monad testnet with the current Level 5 bytecode (see "Live on
+  Monad testnet" below).
 
 ```bash
 forge build

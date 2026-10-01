@@ -542,6 +542,74 @@ destination, not patches on a throwaway prototype:
   documented risk given this project's minutes-to-days SLA range; revisit
   if a future level introduces sub-minute SLAs.
 
+---
+
+## Sponsor integration — Chainlink CRE: automated deadline enforcement
+
+`claimDefault`, `finalizeDelivery`, `resolveDisputeByTimeout` (and their
+`CapacityPool` equivalents) are deliberately permissionless — anyone may
+call them once the deadline they check has passed. Today, nobody reliably
+does: a buyer who forgets to call `claimDefault`, or a provider who forgets
+`finalizeDelivery`, leaves funds sitting in a resolvable-but-unresolved
+state indefinitely. A Chainlink CRE workflow closes this gap by watching
+for due deadlines and calling the right function automatically — without
+changing anything about who is *allowed* to call them.
+
+### `CREDeadlineReceiver.sol` — the onchain half
+
+CRE's `writeReport()` cannot call an arbitrary function on an arbitrary
+already-deployed contract: it can only deliver a report to a receiver
+contract implementing Keystone's `IReceiver` interface
+(`onReport(bytes metadata, bytes report)`), which Chainlink's
+`KeystoneForwarder` calls once DON consensus on that report is reached.
+`src/CREDeadlineReceiver.sol` is that receiver — copied against the real
+`IReceiver` interface from the `chainlink/contracts` npm package (not
+reconstructed from a paraphrase of the docs).
+
+It is a **closed dispatcher, not a generic relayer**: `onReport` decodes a
+`DeadlineAction[]` — each one a `(action, id, subId)` tuple naming one of
+six fixed `Action`s (`MarketClaimDefault`, `MarketFinalizeDelivery`,
+`MarketResolveDisputeByTimeout`, and the three `Pool*` equivalents) — and
+dispatches to exactly that function on one of two **immutable** contract
+addresses set at deployment. It cannot be made to call anything else,
+regardless of what a report contains. This is deliberately narrower than
+"forward whatever calldata the report carries," and it costs nothing here
+specifically: every action this receiver can ever take is already callable
+by anyone directly, today — there is no privilege escalation possible by
+spoofing a call to it, only the inconvenience of an unauthenticated,
+non-consensus action happening through it. The `msg.sender == forwarder`
+check is still enforced regardless, so the receiver's behavior stays gated
+by actual DON consensus the way the architecture intends.
+
+**Honest degradation per action, not per batch.** Each `DeadlineAction` is
+attempted independently via `try/catch`; one stale or already-resolved
+entry (someone else already called it first; the position moved on before
+the batch executed) emits `ActionAttempted(..., success: false)` without
+reverting or blocking the rest of the batch — the same principle this
+project already applies to one assignment's default not blocking a
+sibling's settlement. Tests:
+`test_onReport_batch_one_failure_does_not_block_others`,
+`test_onReport_empty_batch_is_a_noop`.
+
+Deployed via `script/DeployCREReceiver.s.sol`, wired to the Monad testnet
+production `KeystoneForwarder`
+(`0xF8344CFd5c43616a4366C34E3EEE75af79a74482`, confirmed against
+docs.chain.link's forwarder directory — not the mock forwarder
+`0xB9F79d863261869B234c481D1f9A7af84AeAd192` used only by local
+`cre workflow simulate --broadcast`) and the current Level 5
+`CapacityMarket`/`CapacityPool` addresses.
+
+### The workflow itself — not yet built
+
+The offchain half (a CRE workflow: cron trigger sweeping stored deadlines,
+chain-read to confirm a position/assignment is still in the expected
+status before acting, `writeReport()` to this receiver) requires an
+authenticated `cre login`/`cre init` against a real Chainlink account —
+confirmed by testing directly: even local workflow scaffolding fails
+without it. Deliberately not hand-written from guessed boilerplate instead
+of the real generated scaffold; see `AGENTS.md`'s "Sponsor bounty scope"
+for current status.
+
 ## Build & test
 
 Actual commands run against this repo, Foundry `forge 1.8.4`:
@@ -551,8 +619,9 @@ forge build
 forge test
 ```
 
-Last run: 91/91 tests passed (`CapacityMarket.t.sol`: 43,
-`CapacityPool.t.sol`: 42, `RedTeam.t.sol`: 6). This proves the invariants
+Last run: 98/98 tests passed (`CapacityMarket.t.sol`: 43,
+`CapacityPool.t.sol`: 42, `RedTeam.t.sol`: 6,
+`CREDeadlineReceiver.t.sol`: 7). This proves the invariants
 stated above hold under the specific scenarios each test encodes,
 including the three historical vulnerabilities in
 `docs/SECURITY_AUDIT_2026-10-01.md` staying fixed. It does not constitute an

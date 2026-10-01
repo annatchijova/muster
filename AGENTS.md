@@ -288,8 +288,9 @@ forge test
 
 A green `forge test` run proves the invariants listed above hold under the
 scenarios in `test/CapacityMarket.t.sol` (43 tests), `test/CapacityPool.t.sol`
-(42 tests), and `test/RedTeam.t.sol` (6 tests — the regression suite for
-`docs/SECURITY_AUDIT_2026-10-01.md`'s three fixed findings) — 91 total. It
+(42 tests), `test/RedTeam.t.sol` (6 tests — the regression suite for
+`docs/SECURITY_AUDIT_2026-10-01.md`'s three fixed findings), and
+`test/CREDeadlineReceiver.t.sol` (7 tests) — 98 total. It
 is not an independent security audit beyond this project's own red-team
 pass, and does not cover fuzzing, formal verification, or interaction
 between the two contracts (they don't currently call each other, but a
@@ -307,25 +308,30 @@ speculation — don't re-litigate these without new information:
   `Disputed`, `DisputeVoteCast`, etc.) is not decorative: it's the only way
   to browse available capacity today besides raw `cast call`. Zero contract
   changes, low effort.
-- **Chainlink CRE ($3k) — pursue.** Real, currently-unsolved gap:
-  `claimDefault`/`finalizeDelivery`/`resolveDisputeByTimeout` (and the
-  `CapacityPool` equivalents) are deliberately permissionless, but nothing
-  calls them automatically once their deadlines pass. A CRE workflow
-  (EVM-log trigger + cron sweep against the stored deadline) is a
-  legitimate orchestration layer, and it does not change the trust model —
-  it's just a reliable caller of functions anyone could already call.
-  **Scope correction (verified against actual CRE docs, not assumed):** CRE
-  cannot call an arbitrary function on an arbitrary already-deployed
-  contract. `writeReport()` only delivers to a receiver contract you deploy
-  yourself, implementing `IReceiver.onReport(bytes,bytes)`; Chainlink's
-  `KeystoneForwarder` calls that, and the receiver then makes the real call.
-  So this needs one small new `CREDeadlineReceiver.sol` (decodes which
-  function/target the report names, forwards to the matching permissionless
-  function) — not zero-Solidity. `CapacityMarket`/`CapacityPool` themselves
-  still don't change; the receiver only calls their existing public
-  functions, same as anyone else could. Monad testnet/mainnet supported
-  since CRE CLI v1.30.0 (chain selector `2183018362218727504`; confirmed
-  mock Forwarder on Monad testnet: `0xB9F79d863261869B234c481D1f9A7af84AeAd192`).
+- **Chainlink CRE ($3k) — pursue; onchain half DONE.** Real, currently-
+  unsolved gap: `claimDefault`/`finalizeDelivery`/`resolveDisputeByTimeout`
+  (and the `CapacityPool` equivalents) are deliberately permissionless, but
+  nothing calls them automatically once their deadlines pass. **Built:**
+  `src/CREDeadlineReceiver.sol` — a closed dispatcher (six named `Action`s
+  against two immutable contract addresses, no arbitrary-calldata
+  forwarding) implementing Keystone's real `IReceiver` interface (copied
+  from the `chainlink/contracts` npm package, not guessed), gated by
+  `msg.sender == forwarder`. 7/7 tests, including a batch where one stale
+  action fails without blocking a sibling's success (honest degradation,
+  same principle used throughout this project). Deploy script:
+  `script/DeployCREReceiver.s.sol`, wired to the Monad testnet production
+  `KeystoneForwarder` at `0xF8344CFd5c43616a4366C34E3EEE75af79a74482`
+  (confirmed against docs.chain.link's forwarder directory — the mock
+  forwarder `0xB9F79d863261869B234c481D1f9A7af84AeAd192` is for local
+  `cre workflow simulate --broadcast` only, deliberately not what the
+  deploy script uses). **Not yet built:** the actual CRE workflow (cron +
+  chain-read + `writeReport`) that calls this receiver — blocked on Anna
+  authenticating `cre login`/`cre init` against her own Chainlink account,
+  since even local scaffolding requires it; do not hand-write guessed
+  `package.json`/`tsconfig`/SDK-call boilerplate instead of using the real
+  generated scaffold once she's logged in. Monad testnet/mainnet supported
+  since CRE CLI v1.30.0 (installed locally at `~/.cre/bin/cre`, v1.36.0 as
+  of this writing; chain selector `2183018362218727504`).
 - **Mera ($2.5k) — blocked on frontend, not architecture.** Mera derives a
   plain EOA private key client-side from a passkey (WebAuthn PRF) — no
   smart-contract account, no bundler, no changes needed to our contracts at
