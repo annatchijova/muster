@@ -156,10 +156,29 @@ non-adversarial* failure path (an honestly slow provider), not even
 requiring an attacker. Fixed by paying `price + collateral` to the buyer.
 **The same invariant (8, below) was violated by three different functions
 at three different times; writing the rule down after the first two
-instances did not, by itself, catch the third.** The checklist item this
-invariant produces (Definition of Done, below) is the actual mechanism that
-has to be re-run on every payout-adjacent change — restating the invariant
-in prose is necessary but was not, on its own, sufficient. **It held on the
+instances did not, by itself, catch the third.** Checked against git
+history, not just recalled: the Level 2 commit's diff of
+`CapacityMarket.sol` touches only `expire()`. The Level 3 commit cites
+`claimDefault` **four separate times** — as the reference pattern being
+mirrored for `finalizeDelivery`'s liveness fix — while the general rule
+("trace every value the function received... for every status the position
+can reach") was already written in `AGENTS.md` from the `expire()` fix,
+not scoped to that one function. The rule was general, the exact text of
+`claimDefault` was being read and quoted at that moment, and it still
+didn't get re-checked against invariant 8 — because it was being read
+through a different lens entirely: "is this a good permissionless-liveness
+pattern to copy," not "does this fully account for custody." **The
+mechanism: citing an existing function as a good example of one property
+does not trigger re-verification of that function against an unrelated
+property, even when the general rule covering that property already
+exists in writing and the code is being read at that exact moment.**
+Re-reading old code under a new task's framing is not the same as auditing
+it. What actually caught the third instance was a pass structured
+specifically as "trace every ETH in and out, for every function," run
+independent of whatever feature was being built — that structure, not
+memory of the rule, is what has to be repeated, including periodically
+against code nobody is currently touching, not only against new code. **It
+held on the
 fourth attempt:** adding Level 4's `resolveDispute`/
 `resolveAssignmentDispute` reused the exact `Settled`/`Refunded` terminal
 states and `price + collateral` amounts Level 3 already paid out correctly,
