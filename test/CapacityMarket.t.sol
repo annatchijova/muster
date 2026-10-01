@@ -188,7 +188,7 @@ contract CapacityMarketTest is Test {
 
     // --- Expiration path: unused capacity lapses, provider keeps collateral ---
 
-    function test_expire_unused_reservation_returns_collateral_to_provider() public {
+    function test_expire_unused_reservation_pays_collateral_and_price_to_provider() public {
         uint256 positionId = _listAndReserve();
 
         vm.warp(validUntil);
@@ -198,7 +198,30 @@ contract CapacityMarketTest is Test {
 
         (,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
         assertEq(uint8(status), uint8(CapacityMarket.Status.Expired));
+        // Reserved-then-lapsed: the provider keeps both the collateral and
+        // the price, the same way an unexercised option's premium stays
+        // with the writer. See CapacityMarket.expire()'s NatSpec.
+        assertEq(provider.balance, providerBalanceBefore + COLLATERAL + PRICE);
+    }
+
+    function test_expire_never_reserved_listing_returns_collateral_only() public {
+        uint256 positionId = _list(); // never reserved: buyer never paid PRICE
+
+        vm.warp(validUntil);
+
+        uint256 providerBalanceBefore = provider.balance;
+        market.expire(positionId);
+
+        (,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
+        assertEq(uint8(status), uint8(CapacityMarket.Status.Expired));
         assertEq(provider.balance, providerBalanceBefore + COLLATERAL);
+    }
+
+    function test_expire_before_window_closes_reverts_on_listed_position() public {
+        uint256 positionId = _list();
+
+        vm.expectRevert(CapacityMarket.WindowNotYetClosed.selector);
+        market.expire(positionId);
     }
 
     function test_expire_before_window_closes_reverts() public {

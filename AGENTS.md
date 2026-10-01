@@ -17,11 +17,13 @@ Setup and usage are in [`README.md`](README.md); don't duplicate that here.
 
 ## What MUSTER is, in one line
 
-A future specialist response capacity market: a `CapacityPosition` is an
-onchain asset with ownership, a time window, an activation SLA, and
-collateral — reservable, transferable, activatable, and settled exactly
-once. See [`docs/TECHNICAL_README.md`](docs/TECHNICAL_README.md) for the
-full state machine.
+A future specialist response capacity market. Level 1 (`CapacityMarket.sol`)
+is a `CapacityPosition`: an onchain asset with ownership, a time window, an
+activation SLA, and collateral — reservable, transferable, activatable, and
+settled exactly once. Level 2 (`CapacityPool.sol`) pools that same shape
+across many providers under a shared `TermsClass`, routing FIFO at
+activation. See [`docs/TECHNICAL_README.md`](docs/TECHNICAL_README.md) for
+both state machines.
 
 ## Construction method: destination-driven, not MVP-driven
 
@@ -36,13 +38,15 @@ level to rebuild or bypass it.
 
 - **Level 1 (current):** single-provider (`Model A`) capacity position,
   full lifecycle, collateral-backed SLA. `src/CapacityMarket.sol`.
-- **Level 2 (planned):** fungible pooled capacity by domain class
-  (`Model B` — "4 hours of anyone satisfying `ZK_SECURITY_L2`"), built as a
-  routing/matching layer in front of L1-shaped positions, not a rewrite of
-  them.
+- **Level 2 (current):** fungible pooled capacity by domain class
+  (`Model B` — "4 units of anyone satisfying `ZK_SECURITY_L2`"),
+  `src/CapacityPool.sol`. A routing/matching layer (FIFO at `activate()`)
+  in front of L1-shaped assignments, not a rewrite of Level 1 — see the
+  Technical README's "Why a second contract" for why it's a separate file
+  rather than a mode flag on `CapacityMarket`.
 - **Level 3 (planned):** an attestation/dispute layer in front of
-  `settle()`, closing the trust-boundary gap named in the Technical
-  README (today, `settle()` is buyer-honesty-based).
+  `settle()`/`settleAssignment()`, closing the trust-boundary gap named in
+  the Technical README (today, both are buyer-honesty-based).
 
 Before adding a level, re-read the "Invariants" and "Trust boundary"
 sections of the Technical README and confirm the new level preserves every
@@ -52,33 +56,65 @@ project's construction method requires at each step, not a one-time gate.
 ## Invariants (do not weaken these without updating the Technical README)
 
 These are restated briefly here as a checklist; the Technical README has
-the mechanism and the test proving each one. Any change to
-`CapacityMarket.sol` that touches a state transition **must** re-verify all
-five against the test suite before being considered done:
+the mechanism and the test proving each one.
+
+**`CapacityMarket.sol` (Level 1)** — any change touching a state transition
+**must** re-verify all five against the test suite before being considered
+done:
 
 1. No double reservation (`inStatus` guard on `reserve`).
 2. No double consumption (`inStatus` guard on every mutating function).
 3. `transfer()` changes `buyer` only — window, SLA, price, and collateral
    are immutable after `listCapacity`.
-4. Collateral is paid out exactly once per position, by exactly one of
-   `settle`, `claimDefault`, or `expire`.
+4. Collateral **and price** are each paid out exactly once per position —
+   see "Price on expiry" in the Technical README for exactly which
+   recipient gets which, depending on whether the position was ever
+   reserved.
 5. State transitions are one-way; `Settled`/`Expired`/`Defaulted` are
    terminal.
 
-**Known, accepted gap, not an oversight:** `settle()` only proves the
-buyer's address called it — it does not prove the work was delivered or
-met a bar. This is Level 3's job, not a bug to "fix" in Level 1 by adding
-an ad hoc check. Do not add partial/heuristic dispute logic to L1's
-`settle()` — that's exactly the kind of approximated-depth shortcut this
-project's construction method rejects. Build Level 3 properly or leave the
-gap documented.
+**`CapacityPool.sol` (Level 2)** adds, at the grain of an `Assignment`
+rather than a whole position, the same four shape-of-invariant guarantees,
+plus the fungibility-specific one named in this project's own design notes:
 
-**Push-payment is a known liveness gap, not a security hole.** `_payout`
-uses `.call` and requires success; a recipient whose fallback always
-reverts can block their *own* payout path, never a counterparty's. Don't
-"fix" this with a try/catch that silently drops a failed payout — that
-would turn a liveness gap into a fund-loss bug. The real fix is a
-withdrawal-pattern ledger, planned, not yet built.
+6. `reserved + assigned ≤ committed capacity` — `reserve()` checks
+   `pool.available` before decrementing it; see the Technical README's
+   "Why `activate()` cannot run out of capacity" for the accounting
+   identity that must keep holding across `contribute`/`reserve`/`activate`/
+   `expireReservation` if this is ever touched.
+7. One assignment's default never affects a sibling assignment in the same
+   reservation — partial fulfillment is a first-class outcome.
+
+**Known, accepted gap, not an oversight:** `settle()`/`settleAssignment()`
+only prove the buyer's address called them — not that work was delivered or
+met a bar. This is Level 3's job, not a bug to "fix" in Level 1/2 by adding
+an ad hoc check. Do not add partial/heuristic dispute logic to either
+`settle` function — that's exactly the kind of approximated-depth shortcut
+this project's construction method rejects. Build Level 3 properly or leave
+the gap documented.
+
+**Push-payment is a known liveness gap, not a security hole,** in both
+contracts. `_payout` uses `.call` and requires success; a recipient whose
+fallback always reverts can block their *own* payout path, never a
+counterparty's. Don't "fix" this with a try/catch that silently drops a
+failed payout — that would turn a liveness gap into a fund-loss bug. The
+real fix is a withdrawal-pattern ledger, planned, not yet built.
+
+**A fund-lock bug was already caught and fixed once in this project, by
+adversarial self-review rather than by a test — read this before touching
+any payout path.** The first draft of `CapacityMarket.expire()` paid out
+`collateral` only, dropping `price` for a reserved-then-lapsed position: ETH
+the buyer had already paid had no function left that could ever move it.
+The equivalent gap existed in `CapacityPool.expireReservation()` and in the
+total absence of a way to reclaim a contribution's locked collateral after
+its window closed (`withdrawContribution` didn't exist yet). **When adding
+or changing any function that holds ETH in this contract, explicitly trace
+every value the function received (`price`, `collateral`, both) to a
+function that can pay it back out, for every status the position/
+reservation/contribution can reach — including the ones nobody asked about,
+like "never reserved" or "reserved but never activated."** A test suite
+only catches a wrong payout; it does not catch a payout path that was never
+written, because there's nothing for the missing function to fail.
 
 ## Numbers that are decisions, not defaults
 
@@ -88,9 +124,18 @@ withdrawal-pattern ledger, planned, not yet built.
   manipulation is bounded to seconds. **If a future level introduces
   sub-minute SLAs, this assumption no longer holds** and needs revisiting
   before shipping — don't carry it forward silently.
-- No per-position quantity decrement (`quantity` is stored, not consumed
-  partially). Deliberate: partial consumption is a Level 2/Model-B concern,
-  not something to half-build into Level 1's all-or-nothing position.
+- No per-position quantity decrement in Level 1 (`quantity` is stored, not
+  consumed partially) — deliberate; Level 2's `Contribution.remaining` is
+  where partial consumption actually lives.
+- `CapacityPool` fungibility is exact-match only: two contributions are
+  fungible iff their `TermsClass` hashes identically (same domain, window,
+  SLA, and price to the wei). No fuzzy/partial matching. Deliberate scope
+  limit for this level, not an oversight — see the Technical README's
+  "Fungibility" section.
+- No minimum `contribute()` quantity and no cap on contributions-per-class
+  in Level 2. A known, accepted gas-griefing surface on `activate()`'s FIFO
+  walk (see Technical README) — not yet worth the complexity of a floor or
+  a batched-consumption bound at this level's expected liquidity.
 
 ## Build & test
 
@@ -99,10 +144,13 @@ forge build
 forge test
 ```
 
-A green `forge test` run proves the lifecycle and the five invariants hold
-under the scenarios in `test/CapacityMarket.t.sol` (15 tests). It is not a
-security audit and does not cover fuzzing, formal verification, or
-multi-contract interaction once Level 2 exists — say exactly that when
+A green `forge test` run proves the invariants listed above hold under the
+scenarios in `test/CapacityMarket.t.sol` (17 tests) and
+`test/CapacityPool.t.sol` (23 tests) — 40 total. It is not a security audit
+and does not cover fuzzing, formal verification, or interaction between the
+two contracts (they don't currently call each other, but a future level
+that connects them needs its own test coverage, not an assumption that
+either suite already implies it). Say exactly what a green run covers when
 reporting results, not "tests pass" unscoped.
 
 ## License
@@ -136,7 +184,10 @@ SPDX tags as if they were placeholders left by mistake.
 
 ## Definition of done for a change to this repo
 
-- [ ] All five invariants above still hold; `forge test` is green.
+- [ ] All invariants above still hold; `forge test` is green.
+- [ ] Every value a changed/new function receives (`price`, `collateral`)
+      is traceable to a payout function for every status the asset can
+      reach — including states nobody explicitly asked about.
 - [ ] If a new state or transition was added, the Technical README's state
       machine diagram and invariant list were updated in the same change.
 - [ ] No MVP/quick-version scope was introduced for a load-bearing property.

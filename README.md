@@ -62,14 +62,41 @@ exact invariants and the tests that exercise each one.
 
 ## Current build
 
-**Level 1**, by design: one provider owns one position at a time (not yet a
-pooled market of fungible capacity across many providers — that's the next
-level, and the state machine above is built so it extends into that rather
-than being replaced by it).
+**Level 1 — `CapacityMarket.sol`**: one provider owns one position at a
+time. The diagram above is this level.
 
-- Solidity contract (`src/CapacityMarket.sol`), Foundry project.
-- 15/15 tests passing (`test/CapacityMarket.t.sol`), covering the full
-  lifecycle plus every invariant violation listed above.
+**Level 2 — `CapacityPool.sol`**: the fungible version. A provider
+contributes capacity to a class instead of a personal position — *"8 units
+of `ZK_SECURITY_L2`"* — and a buyer reserves quantity from that class
+without naming a provider:
+
+```
+                 ZK_SECURITY_L2  (one terms class: domain, window, SLA, price)
+                       │
+          ┌────────────┼────────────┐
+          │            │            │
+       Provider A   Provider B   Provider C
+          8 units      4 units      12 units
+          └────────────┼────────────┘
+                       │
+                  24 units committed
+                       │
+            buyer reserves 10 units
+                       │
+             activate() routes FIFO:
+             8 from A, 2 from B — two independent
+             claims, each with its own SLA clock
+```
+
+One provider defaulting on their slice of a reservation doesn't sink the
+rest — each routed slice is its own accept/settle/default lifecycle,
+Level 1's state machine run once per assigned provider instead of once per
+position.
+
+- Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
+  `src/CapacityPool.sol`).
+- 40/40 tests passing (`test/`), covering both lifecycles and every
+  invariant violation.
 - Not yet deployed to Monad testnet. Not yet audited.
 
 ```bash

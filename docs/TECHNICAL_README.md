@@ -7,25 +7,36 @@ for that.
 ## Status
 
 Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
-Current level: **L1 — single-provider capacity position**, deployed to a local
-Anvil chain only, 15/15 tests passing. Not audited. Not deployed to Monad
-testnet or mainnet yet.
+
+- **Level 1 — `CapacityMarket.sol`**: single-provider capacity position, full
+  lifecycle. 17/17 tests passing.
+- **Level 2 — `CapacityPool.sol`**: fungible, multi-provider capacity pooled
+  by domain class, routed FIFO at activation. 23/23 tests passing.
+
+40/40 tests passing total, local Anvil chain only. Not audited. Not deployed
+to Monad testnet or mainnet yet.
 
 ## What MUSTER is, precisely
 
 MUSTER turns **future specialist response capacity** into an onchain,
-tradable, state-machine-governed asset: a `CapacityPosition`. A provider
-commits to deliver `quantity` units of work in a `domain` (e.g.
-`ZK_SECURITY_L2`), inside a time window `[validFrom, validUntil]`, with a
-bounded acknowledgement time (`activationSLA`) once a buyer activates it.
+tradable, state-machine-governed asset. Level 1 is that asset owned by one
+named provider (`CapacityPosition`). Level 2 is the same asset pooled across
+many providers who satisfy the same terms (`TermsClass` / `Contribution` /
+`Assignment`), so a buyer can reserve capacity without naming a provider —
+only once a buyer activates does the contract pick, FIFO, which provider's
+contribution actually fulfills it.
 
 MUSTER does **not** claim to prove a provider was actually available or that
 delivered work met a bar — see "Trust boundary" below. It proves the
-narrower, onchain-provable claim: *this capacity was reserved, transferred,
-activated, and settled (or defaulted) exactly once, in that order, with its
-terms unchanged.*
+narrower, onchain-provable claim: *this capacity was reserved, transferred
+(or routed), activated, and settled (or defaulted) exactly once, in that
+order, with its terms unchanged.*
 
-## State machine
+---
+
+## Level 1 — `CapacityMarket.sol`: single-provider position
+
+### State machine
 
 ```
 LISTED
@@ -34,7 +45,7 @@ LISTED
 RESERVED ──transfer()──▶ RESERVED (new buyer, same terms)
   │  │
   │  └─ expire() [window closed, never activated] ──▶ EXPIRED
-  │                                                      (collateral → provider)
+  │                                              (collateral [+ price] → provider)
   │  activate()
   ▼
 ACTIVATED
@@ -46,98 +57,255 @@ ACTIVATED
   │                                       (collateral → buyer)
 ```
 
-All transitions are one-way. `Settled`, `Expired`, and `Defaulted` are
-terminal — no function transitions a position out of them. This is enforced
-by the `inStatus` modifier checking the *exact* expected status before every
-mutating call, not just "not yet terminal."
+`expire()` also accepts a position still in `Listed` (never reserved) once
+its window has closed — see "Price on expiry" below for why the payout
+differs between the two originating states. All transitions are one-way;
+`Settled`, `Expired`, `Defaulted` are terminal.
 
-## Invariants (the load-bearing claims this contract makes)
+### Invariants
 
-1. **No double reservation.** `reserve()` requires `Status.Listed`. Once
-   reserved, a second `reserve()` call reverts with `WrongStatus(Listed,
-   Reserved)`. Mechanism: `inStatus` modifier. Test:
+1. **No double reservation.** `reserve()` requires `Status.Listed`. Test:
    `test_reserve_twice_reverts`.
-2. **No double consumption.** `activate()`, `acceptActivation()`, `settle()`,
-   and `claimDefault()` each require the position to be in the exact
-   predecessor state. A position cannot be activated twice, settled twice, or
-   defaulted after settlement. Mechanism: `inStatus` modifier on every
-   mutating function. Tests: `test_activate_twice_reverts`,
+2. **No double consumption.** Every mutating function requires the exact
+   predecessor state. Tests: `test_activate_twice_reverts`,
    `test_settle_twice_reverts`.
-3. **Transfer preserves the asset; it does not reset it.** `transfer()`
-   mutates only `buyer`. `validFrom`, `validUntil`, `activationSLA`, `price`,
-   and `collateral` are set once in `listCapacity` and never written again by
-   any other function. Test: `test_transfer_preserves_window_sla_and_collateral`.
-4. **Collateral is locked once, paid exactly once.** `listCapacity` is
-   `payable`; `msg.value` becomes `collateral`, held by the contract. Exactly
-   one of `settle` (→ provider, with `price`), `claimDefault` (→ buyer), or
-   `expire` (→ provider) can execute per position, because each requires a
-   distinct, mutually exclusive terminal-adjacent status. There is no
-   function that reads `collateral` without also transitioning to a terminal
-   state in the same call.
-5. **Reentrancy cannot double-pay.** Every payout function sets `status` to
-   its terminal value *before* the external call in `_payout` (checks-
-   effects-interactions). A reentrant call into any mutating function for the
-   same `positionId` hits the `inStatus` guard and reverts.
+3. **Transfer preserves the asset.** `transfer()` mutates only `buyer`.
+   Test: `test_transfer_preserves_window_sla_and_collateral`.
+4. **Collateral and price are each paid out exactly once per position,**
+   by exactly one of `settle`, `claimDefault`, or `expire` — mutually
+   exclusive by status.
+5. **Reentrancy cannot double-pay.** Status is set to its terminal value
+   before the external call in `_payout` (checks-effects-interactions).
+
+### Price on expiry — a stated economic rule, not a missing refund
+
+When a **reserved** position expires unused, the provider keeps both
+`collateral` and `price` — the same way an unexercised option's premium
+stays with the writer, compensating them for having blocked that capacity
+for the whole window regardless of whether the buyer used it. The buyer is
+not refunded. When a position expires having **never been reserved**, only
+`collateral` returns to the provider, because no `price` was ever paid.
+
+This was a real bug in an earlier draft of this contract: `expire()` paid
+out `collateral` only, in both cases, which meant a buyer's `price` payment
+on a reserved-then-lapsed position had no function that could ever move it
+— permanently locked ETH. Caught in a per-level adversarial self-review
+before this level was considered done (see `AGENTS.md`'s construction
+method), not by a test, because no test had been written to check for a
+*missing* payout path. Fixed by generalizing `expire()` to run from either
+`Listed` or `Reserved` and compute the payout accordingly. Tests:
+`test_expire_unused_reservation_pays_collateral_and_price_to_provider`,
+`test_expire_never_reserved_listing_returns_collateral_only`.
+
+---
+
+## Level 2 — `CapacityPool.sol`: fungible multi-provider pool
+
+### Why a second contract instead of extending `CapacityMarket`
+
+A `CapacityPosition` is owned by one provider from creation. Making
+capacity fungible means a buyer reserves *quantity*, not a specific
+provider's position — the provider is picked later, at activation, from
+whoever contributed to the same terms class. That is a different
+reservation object (`Reservation`, holding possibly several `Assignment`s)
+built on top of a different commitment object (`Contribution`, many per
+class). Bolting that onto `CapacityPosition` would have meant a second,
+incompatible meaning for half its fields depending on a mode flag — exactly
+the kind of "extend by special-casing" that erodes a state machine's
+invariants over time. `CapacityPool` reuses Level 1's *pattern*
+(Pending → Accepted → Settled, or Pending → Defaulted, one-way, collateral
+locked once and paid once) at the grain of an `Assignment` instead of a
+whole position, which is what makes it a coherent next level rather than a
+rewrite.
+
+### Fungibility: `TermsClass` and `classId`
+
+```solidity
+struct TermsClass {
+    bytes32 domain;
+    uint64 validFrom;
+    uint64 validUntil;
+    uint64 activationSLA;
+    uint256 pricePerUnit;
+    uint256 collateralPerUnit;
+}
+```
+
+`classId = keccak256(abi.encode(terms))`. Two contributions are fungible
+with each other if and only if they hash to the same `classId` — i.e. they
+agree on domain, window, SLA, and price down to the wei. This is a
+deliberately strict notion of fungibility for Level 2: no partial-match
+routing (e.g. "close enough" windows), no price discovery. Loosening that
+is a plausible Level 3+ direction, not something this level approximates.
+
+### State machine
+
+```
+contribute() ──▶ Contribution{provider, remaining} queued FIFO in the pool
+
+reserve(classId, qty) ──▶ Reservation{Reserved}         [available -= qty]
+  │
+  ├─ transferReservation()  (Reserved → Reserved, new buyer)
+  │
+  ├─ expireReservation()  [window closed, never activated]
+  │     ──▶ Reservation{Expired}, available += qty, price refunded to buyer
+  │
+  └─ activate()  [FIFO-consumes `qty` from contributions, possibly split]
+        ──▶ Reservation{Activated}, one Assignment{Pending} per provider slice
+              │
+              ├─ acceptAssignment() [within shared SLA] ──▶ Assignment{Accepted}
+              │        ──settleAssignment()──▶ Assignment{Settled}  (price+collateral → provider)
+              │
+              └─ claimAssignmentDefault() [SLA missed] ──▶ Assignment{Defaulted}
+                       (collateral → buyer)
+
+withdrawContribution()  [window closed, any time] ──▶ pays collateral for
+                          a contribution's unassigned `remaining`, to its provider
+```
+
+Each `Assignment` is independent: one provider's default does not affect a
+sibling assignment from another provider in the same reservation (partial
+fulfillment is a first-class outcome, not an edge case). Test:
+`test_one_provider_default_does_not_block_other_assignments`.
+
+### Invariant: `reserved + assigned ≤ committed capacity`
+
+This is Level 2's version of Level 1's "no double reservation," generalized
+to fungible units, and it's the literal invariant named in this project's
+own design notes. `reserve()` requires `pool.available >= quantity` and
+decrements `available` by exactly `quantity` before minting the
+reservation; two buyers can never jointly reserve more than was
+contributed. Tests: `test_reserve_more_than_available_reverts`,
+`test_two_buyers_cannot_jointly_oversubscribe_the_pool`.
+
+### Why `activate()` cannot run out of capacity mid-loop
+
+`activate()` walks `pool.contributions` from `pool.contribHead` forward,
+consuming `remaining` from each until the reservation's `quantity` is
+covered. This is safe — it cannot index past the end of the array — because
+two accounting identities hold at every point in the contract's execution,
+by construction of every function that touches them:
+
+- **(A)** `totalCommitted = available + totalReservedPending + totalAssigned`
+  — `contribute()` grows `totalCommitted` and `available` together;
+  `reserve()` moves `quantity` from `available` into the (implicit)
+  reserved-but-not-yet-activated bucket; `activate()` moves a reservation's
+  `quantity` from that bucket into `totalAssigned`; `expireReservation()`
+  moves it back to `available`.
+- **(B)** `totalCommitted = Σ(contribution.remaining) + totalAssigned` —
+  `contribute()` grows `totalCommitted` and a fresh contribution's
+  `remaining` together; `activate()` is the only function that decrements
+  `remaining`, and it moves exactly that amount into `totalAssigned`
+  one-for-one.
+
+Subtracting, `Σ(remaining) = available + totalReservedPending`. Since the
+reservation currently being activated is itself part of
+`totalReservedPending` (its quantity was reserved but not yet assigned),
+`Σ(remaining) ≥ totalReservedPending ≥ quantity` at the moment `activate()`
+runs for it. The FIFO walk is therefore guaranteed to find enough
+unconsumed contribution capacity before `contribHead` reaches the end of
+the array. This argument — not a gas-bounded loop or a try/catch — is what
+the `activate()` implementation relies on; if a future change breaks either
+identity above, this guarantee breaks with it silently (no revert will
+flag it as a regression in the accounting, only an eventual out-of-bounds
+panic under the right reservation pattern). Any change to `contribute`,
+`reserve`, `activate`, or `expireReservation` must re-derive this argument,
+not just pass the existing tests.
+
+### Price on expiry — asymmetric with Level 1, deliberately
+
+`expireReservation()` **refunds the buyer's price in full**, unlike
+`CapacityMarket.expire()`'s provider-keeps-the-premium rule. The two are
+asymmetric because the thing a reservation *names* differs: a
+`CapacityMarket` reservation names a specific provider from `reserve()`
+onward, so that provider bore the exclusivity cost of the window even if
+never activated. A `CapacityPool` reservation names no provider until
+`activate()` routes one — if it never activates, no specific provider was
+ever committed, and pro-rating the price across every contributor to the
+class is complexity this level does not take on. Refunding the buyer is the
+only non-arbitrary recipient. Test:
+`test_expireReservation_returns_quantity_and_refunds_buyer`.
+
+This was caught in the same adversarial self-review as Level 1's price-lock
+bug, for the identical underlying reason (a payout function that only
+returned `collateral` and silently dropped `price`) — see `withdrawContribution`
+below for the matching gap on the provider side.
+
+### `withdrawContribution` — the provider-side half of the same gap
+
+Even after fixing `expireReservation`'s buyer refund, a contribution's
+`remaining` (capacity nobody ever reserved, or reserved-then-expired without
+being assigned) had no function that could ever return its locked
+collateral to the provider. `withdrawContribution(classId, index)` closes
+this: once the class's window has permanently closed, the provider who owns
+`contributions[index]` can reclaim `collateralPerUnit * remaining` and
+zero out `remaining`. Tests: `test_withdrawContribution_after_window_close_pays_provider`,
+`test_withdrawContribution_twice_reverts`,
+`test_withdrawContribution_after_partial_assignment_pays_only_remaining`.
+
+**Known cosmetic limitation:** `withdrawContribution` does not decrement
+`pool.available`/`pool.totalCommitted`. This is safe — once
+`block.timestamp >= validUntil`, neither `reserve()` nor `activate()` can
+execute against this class again, so those counters are already inert for
+any future state change — but it means `poolInfo()`'s `available` can
+overstate truly-reclaimable capacity after any withdrawal has happened.
+Treat `poolInfo()` as accurate only before a class's window closes.
+
+---
 
 ## Trust boundary — what is and is not provable onchain
 
-Onchain (provable, tamper-evident):
+Onchain (provable, tamper-evident), for both contracts:
 - Who committed capacity, how much, in what domain, in what window.
-- That it was reserved by exactly one buyer at a time.
-- That a transfer happened and who the parties were.
-- That activation happened at a specific block timestamp, and whether the
-  provider acknowledged inside the SLA.
-- Where payment and collateral actually went.
+- That capacity was reserved by exactly one buyer (L1) or drawn from exactly
+  one `available` pool with no overselling (L2) at a time.
+- That a transfer or routing happened and who the parties were.
+- That activation happened at a specific block timestamp, and whether each
+  responsible provider acknowledged inside the SLA.
+- Where every payment and every collateral unit actually went.
 
-Not onchain, and not provable by this contract alone:
-- That the provider was actually available or did the work.
+Not onchain, and not provable by either contract alone:
+- That a provider was actually available or did the work.
 - That the work met the buyer's quality bar.
 - Any identity behind an address.
 
-`acceptActivation` only proves the provider's address sent a transaction
-inside the SLA window — not that a human did anything. `settle` only proves
-the buyer's address called it — in L1 this is an honesty assumption the buyer
-makes about their own interest (they only settle if satisfied), not a
-dispute-resolution mechanism. **This is a known, stated limitation, not an
-oversight**: closing it is the explicit target of a later level (an
-attestation/oracle layer — see "Known limitations and next levels"), not
-something L1 claims to solve.
+`acceptActivation`/`acceptAssignment` only prove an address sent a
+transaction inside the SLA window — not that a human did anything.
+`settle`/`settleAssignment` only prove the buyer's address called it — an
+honesty assumption about the buyer's own interest, not a dispute-resolution
+mechanism. **This is a known, stated limitation, not an oversight**: closing
+it is Level 3's explicit target (see below).
 
 ## Known limitations and next levels
 
-Per the project's construction discipline (destination-driven, not MVP-driven
-— see `AGENTS.md`), these are named as the next *coherent levels* toward the
+Per the project's construction discipline (destination-driven, not
+MVP-driven — see `AGENTS.md`), named as the next coherent levels toward the
 destination, not patches on a throwaway prototype:
 
-- **Personal capacity only (Model A).** A position belongs to one named
-  provider. The idea behind MUSTER is partly a *fungible* market — "4 hours of
-  anyone satisfying `ZK_SECURITY_L2`" — pooling capacity across providers
-  (Model B). L1 deliberately ships Model A first because it is the smaller
-  state machine that already carries every invariant Model B will need
-  (ownership, transfer, expiration, activation, settlement); Model B is a
-  routing/matching layer in front of a pool of L1-shaped positions, not a
-  rewrite of them.
-- **Push-payment griefing.** `_payout` uses `.call` and requires success.
-  If a recipient address is a contract whose receive function always
-  reverts, the payout (and the state transition bundled with it) cannot
-  complete, and the position is stuck in its pre-terminal state. This harms
-  only the reverting party (a provider blocking their own `expire`, a buyer
-  blocking their own `claimDefault`) — it is not a griefing vector against a
-  counterparty — but it is a liveness gap. Planned fix: a pull-payment
-  (withdrawal-pattern) ledger instead of push payouts.
-- **No partial consumption.** `quantity` is recorded but not decremented; a
-  position is all-or-nothing. Splitting a position into partially-consumable
-  units is a Model-B-era concern.
-- **No dispute/attestation layer.** `settle` is buyer-honesty-based. A later
-  level routes delivery confirmation through an offchain attestation
-  (hash-committed evidence, per the `annaconda`-style evidence-freeze
-  pattern already used elsewhere in this author's portfolio) before
-  `settle` becomes callable, or exposes a dispute window.
-- **`block.timestamp` is used for window and SLA comparisons.** A validator
-  can shift it by a small amount (seconds, not minutes). Given the SLA
-  values this contract is designed for (minutes to days), this is an
-  accepted, documented risk, not a gap — it would need revisiting if a
-  future level introduces sub-minute SLAs.
+- **No dispute/attestation layer (Level 3).** `settle`/`settleAssignment`
+  are buyer-honesty-based. A later level routes delivery confirmation
+  through an offchain attestation (hash-committed evidence) before
+  settlement becomes callable, or exposes a dispute window.
+- **Push-payment griefing.** `_payout` uses `.call` and requires success. A
+  recipient whose fallback always reverts can block their *own* payout path
+  (a provider blocking their own `expire`, a buyer blocking their own
+  `claimAssignmentDefault`) — never a counterparty's. Planned fix: a
+  pull-payment (withdrawal-ledger) pattern replacing push payouts
+  throughout both contracts.
+- **Strict terms-matching fungibility.** L2 only pools contributions whose
+  terms hash identically. No partial/fuzzy matching, no price discovery
+  between classes. A plausible Level 3+ direction, not attempted here.
+- **Contribution-fragmentation gas griefing in `activate()`.** Anyone can
+  contribute many small-quantity entries to a class, lengthening the FIFO
+  walk a future `activate()` call must perform. The correctness argument
+  above guarantees the walk terminates, but not that it terminates cheaply.
+  No minimum contribution size or batched-consumption bound is enforced
+  yet. Worth revisiting before any real liquidity is expected in a single
+  class.
+- **`block.timestamp` is used for window and SLA comparisons,** in both
+  contracts. A validator can shift it by seconds, not minutes. Accepted,
+  documented risk given this project's minutes-to-days SLA range; revisit
+  if a future level introduces sub-minute SLAs.
 
 ## Build & test
 
@@ -148,12 +316,10 @@ forge build
 forge test
 ```
 
-Last run: 15/15 tests passed (`test/CapacityMarket.t.sol`). This proves the
-five invariants above hold under the specific scenarios each test encodes —
-reservation, transfer, activation, acceptance, settlement, timeout/default,
-and expiration paths, plus the wrong-value and wrong-window reverts. It does
-not constitute a security audit, and no fuzzing or formal verification has
-been run yet.
+Last run: 40/40 tests passed (`CapacityMarket.t.sol`: 17, `CapacityPool.t.sol`:
+23). This proves the invariants stated above hold under the specific
+scenarios each test encodes. It does not constitute a security audit, and no
+fuzzing or formal verification has been run yet.
 
 ## License
 

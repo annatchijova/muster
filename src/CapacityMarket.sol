@@ -144,16 +144,29 @@ contract CapacityMarket {
         emit Transferred(positionId, msg.sender, to);
     }
 
-    /// @notice Anyone may close out a reservation that was never activated
-    /// before its window closed. Capacity is not consumed; it just lapses.
-    function expire(uint256 positionId) external inStatus(positionId, Status.Reserved) {
+    /// @notice Anyone may close out a position that was never activated
+    /// before its window closed — whether or not it was ever reserved.
+    /// Capacity is not consumed; it just lapses. Collateral always returns
+    /// to the provider. If the position had been reserved, `price` goes to
+    /// the provider too: the same way an unexercised option's premium
+    /// compensates the writer for having blocked that capacity, a buyer who
+    /// reserved and let the window lapse does not get `price` back — it is
+    /// the provider's compensation for capacity nobody else could buy
+    /// during that window. This is a stated economic rule, not a missing
+    /// refund path: see docs/TECHNICAL_README.md "Price on expiry".
+    function expire(uint256 positionId) external {
         CapacityPosition storage p = positions[positionId];
+        Status prior = p.status;
+        if (prior != Status.Listed && prior != Status.Reserved) {
+            revert WrongStatus(Status.Reserved, prior);
+        }
         if (block.timestamp < p.validUntil) revert WindowNotYetClosed();
 
         p.status = Status.Expired;
         emit Expired(positionId);
 
-        _payout(p.provider, p.collateral);
+        uint256 amount = p.collateral + (prior == Status.Reserved ? p.price : 0);
+        _payout(p.provider, amount);
     }
 
     /// @notice Buyer activates the position, starting the provider's
