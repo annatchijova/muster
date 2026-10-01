@@ -297,6 +297,44 @@ future level that connects them needs its own test coverage, not an
 assumption that either suite already implies it). Say exactly what a green
 run covers when reporting results, not "tests pass" unscoped.
 
+## Sponsor bounty scope (decided 2026-10-01, re-check before reopening)
+
+Researched against actual sponsor docs, not the hackathon idea doc's
+speculation — don't re-litigate these without new information:
+
+- **Envio ($1k) — pursue.** Monad testnet has native, documented
+  HyperIndex/HyperSync support. Indexing MUSTER's own events (`Listed`,
+  `Disputed`, `DisputeVoteCast`, etc.) is not decorative: it's the only way
+  to browse available capacity today besides raw `cast call`. Zero contract
+  changes, low effort.
+- **Chainlink CRE ($3k) — pursue.** Real, currently-unsolved gap:
+  `claimDefault`/`finalizeDelivery`/`resolveDisputeByTimeout` (and the
+  `CapacityPool` equivalents) are deliberately permissionless, but nothing
+  calls them automatically once their deadlines pass. A CRE workflow
+  (EVM-log trigger + cron check against the stored deadline + an automatic
+  call to the already-existing permissionless function) is a legitimate
+  orchestration layer — it does not change the trust model, and needs no
+  contract changes. Monad testnet/mainnet supported since CRE CLI 1.29.
+  Rough scope: one TypeScript workflow + config, ~1-2 days.
+- **Mera ($2.5k) — blocked on frontend, not architecture.** Mera derives a
+  plain EOA private key client-side from a passkey (WebAuthn PRF) — no
+  smart-contract account, no bundler, no changes needed to our contracts at
+  all (any EOA-compatible contract already works with a Mera-derived key).
+  The bounty requires a deployed app using Mera as the signer; MUSTER has
+  no frontend yet. Revisit this as the natural wallet-connection choice
+  once frontend work actually starts — not before.
+- **Kuru ($5k) — rejected, do not pursue.** Kuru's `deploy-market` needs a
+  plain ERC-20 base/quote pair for its spot order book. MUSTER's positions
+  carry live lifecycle state (activation deadline, dispute status, panel
+  votes) that a CLOB trade cannot carry across — selling a "capacity share"
+  mid-dispute or mid-SLA-countdown divorced from that state isn't the same
+  asset anymore. Listing would require minting a separate ERC-20 wrapper
+  per `TermsClass` plus a new vault adapter: a new subsystem built to chase
+  the bounty, not a natural extension of the product. Don't reconsider this
+  without a materially different asset shape than what Levels 1-5 built.
+- Privy and Alchemy were already screened out earlier (no non-decorative
+  integration identified / credits-only, not worth architecture changes).
+
 ## License
 
 **Do not add a `LICENSE` file or an SPDX identifier other than
