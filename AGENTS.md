@@ -311,11 +311,21 @@ speculation — don't re-litigate these without new information:
   `claimDefault`/`finalizeDelivery`/`resolveDisputeByTimeout` (and the
   `CapacityPool` equivalents) are deliberately permissionless, but nothing
   calls them automatically once their deadlines pass. A CRE workflow
-  (EVM-log trigger + cron check against the stored deadline + an automatic
-  call to the already-existing permissionless function) is a legitimate
-  orchestration layer — it does not change the trust model, and needs no
-  contract changes. Monad testnet/mainnet supported since CRE CLI 1.29.
-  Rough scope: one TypeScript workflow + config, ~1-2 days.
+  (EVM-log trigger + cron sweep against the stored deadline) is a
+  legitimate orchestration layer, and it does not change the trust model —
+  it's just a reliable caller of functions anyone could already call.
+  **Scope correction (verified against actual CRE docs, not assumed):** CRE
+  cannot call an arbitrary function on an arbitrary already-deployed
+  contract. `writeReport()` only delivers to a receiver contract you deploy
+  yourself, implementing `IReceiver.onReport(bytes,bytes)`; Chainlink's
+  `KeystoneForwarder` calls that, and the receiver then makes the real call.
+  So this needs one small new `CREDeadlineReceiver.sol` (decodes which
+  function/target the report names, forwards to the matching permissionless
+  function) — not zero-Solidity. `CapacityMarket`/`CapacityPool` themselves
+  still don't change; the receiver only calls their existing public
+  functions, same as anyone else could. Monad testnet/mainnet supported
+  since CRE CLI v1.30.0 (chain selector `2183018362218727504`; confirmed
+  mock Forwarder on Monad testnet: `0xB9F79d863261869B234c481D1f9A7af84AeAd192`).
 - **Mera ($2.5k) — blocked on frontend, not architecture.** Mera derives a
   plain EOA private key client-side from a passkey (WebAuthn PRF) — no
   smart-contract account, no bundler, no changes needed to our contracts at
