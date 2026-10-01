@@ -113,12 +113,26 @@ level in the Technical README.
   `src/CapacityPool.sol`).
 - 60/60 tests passing (`test/`), covering all three levels' lifecycles and
   every invariant violation.
-- Not yet deployed to Monad testnet. Not yet audited.
+- Live on Monad testnet (see "Live on Monad testnet" below). Not yet audited.
 
 ```bash
 forge build
 forge test
 ```
+
+## Live on Monad testnet
+
+Deployed and verified (Sourcify `exact_match`, source matches byte-for-byte)
+on 2026-10-01, chain id 10143 — a from-scratch deployment, not a reused or
+pre-existing contract:
+
+| Contract | Address |
+|---|---|
+| `CapacityMarket` | `0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c` |
+| `CapacityPool` | `0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3` |
+
+Look either address up on any Monad testnet explorer (Monadscan,
+Socialscan, MonadVision) to read the verified source directly.
 
 ## Deploying to Monad testnet
 

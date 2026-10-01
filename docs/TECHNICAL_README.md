@@ -14,8 +14,21 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
   by domain class, routed FIFO at activation, same Level 3 flow at the
   per-assignment grain. 32/32 tests passing.
 
-60/60 tests passing total, local Anvil chain only. Not audited. Not deployed
-to Monad testnet or mainnet yet.
+60/60 tests passing total. Deployed and Sourcify-verified on Monad testnet
+(chain id 10143) 2026-10-01 — `CapacityMarket` at
+`0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c`, `CapacityPool` at
+`0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3`. Not audited. Not deployed to
+mainnet.
+
+**What "deployed" means here, precisely, so it isn't overclaimed:** the
+bytecode is live and the source is verified exact-match — anyone can read
+and call the contracts. It does not mean anyone has used them yet: no
+capacity has been listed or contributed onchain, so every invariant above
+is still only demonstrated by the local Foundry test suite, not by live
+usage. A real exercise of the deployed contracts (list → reserve → activate
+→ claim → settle, run against the live testnet rather than Anvil) is
+worthwhile before treating this deployment as more than "the code is
+reachable."
 
 ## What MUSTER is, precisely
 
