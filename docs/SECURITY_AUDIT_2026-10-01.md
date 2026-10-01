@@ -292,7 +292,30 @@ sequence can even begin). Existing regression tests
 to assert the corrected payout amounts. Full suite: 71/71 passing
 (`CapacityMarket.t.sol`: 31, `CapacityPool.t.sol`: 34, `RedTeam.t.sol`: 6).
 
-**Not yet done:** the fixed contracts have not been redeployed to Monad
-testnet — the addresses in `README.md` still point at the vulnerable
-bytecode from the 2026-10-01 deploy. Redeploy and re-verify before relying
-on the live testnet instance for anything beyond reading this history.
+## Post-fix redeploy and live verification (2026-10-01, same session)
+
+Redeployed both fixed contracts to Monad testnet and re-verified
+(Sourcify `exact_match`): `CapacityMarket` at
+`0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f`, `CapacityPool` at
+`0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F`. The original
+(vulnerable-bytecode) addresses from before this audit are left live and
+verified as part of the audit trail, not reused.
+
+Then exercised the full lifecycle against the new deployment with real MON
+(not Anvil), on both contracts: `listCapacity` → `reserve` → `activate` →
+`acceptActivation` → `claimDelivery` → `settle` on `CapacityMarket`; the
+`CapacityPool` equivalent through `settleAssignment`. In both runs the
+provider's payout was exactly `price + collateral` and the contract's
+balance returned to `0` after settlement — the happy path the fix touches
+(F1 is specifically the *default* path, not this one, but the same
+`_payout` plumbing) behaves correctly on a real chain, not only in Foundry.
+See `README.md`'s "Live on Monad testnet" for transaction hashes.
+
+**Not yet done:** the default/dispute/expire paths — the ones F1, F2, and
+F3 actually live on — have not themselves been re-exercised against the
+live redeployed contracts, only against local Foundry tests
+(`test/RedTeam.t.sol`). The happy-path run above confirms the redeploy is
+the fixed source and that basic settlement still works live; it does not
+independently confirm F1/F2/F3's fixes hold outside Foundry. Running
+`claimDefault` and a poisoned-duration `listCapacity` call against the live
+contracts would close that gap.

@@ -111,11 +111,12 @@ level in the Technical README.
 
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`).
-- 60/60 tests passing (`test/`), covering all three levels' lifecycles and
-  every invariant violation.
-- A first deploy went live on Monad testnet; it now runs **outdated,
-  vulnerable bytecode** — see "Live on Monad testnet" below before using
-  either address for anything.
+- 71/71 tests passing (`test/`), covering all three levels' lifecycles,
+  every invariant violation, and a permanent regression suite for the
+  red-team findings below.
+- Live on Monad testnet with the **patched** bytecode (see "Live on Monad
+  testnet" below) and exercised end-to-end for real — not just tested
+  locally.
 
 ```bash
 forge build
@@ -124,24 +125,33 @@ forge test
 
 ## Live on Monad testnet
 
-> **These addresses are stale.** Deployed and verified (Sourcify
-> `exact_match`) on 2026-10-01, chain id 10143 — but a same-day red-team
-> pass (`docs/SECURITY_AUDIT_2026-10-01.md`) found and fixed three real
-> vulnerabilities in the source *after* this deploy went out. The bytecode
-> at these two addresses still has all three. Do not list capacity, reserve,
-> or send real value to either address. A redeploy of the fixed source is
-> the next step; this section will be updated with new addresses once that
-> happens.
+Redeployed 2026-10-01 after the red-team pass below fixed three
+vulnerabilities found in the first deploy; these are the current,
+Sourcify-verified (`exact_match`), fixed contracts:
 
-| Contract | Address (outdated bytecode) |
+| Contract | Address |
 |---|---|
-| `CapacityMarket` | `0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c` |
-| `CapacityPool` | `0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3` |
+| `CapacityMarket` | `0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f` |
+| `CapacityPool` | `0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F` |
 
-Look either address up on any Monad testnet explorer (Monadscan,
-Socialscan, MonadVision) to read the verified (vulnerable) source directly
-— kept visible deliberately, as part of this project's own audit trail,
-not hidden after the fact.
+Both were exercised end-to-end on testnet, not just in local tests: list →
+reserve → activate → accept → claim delivery → settle, real transactions,
+real MON. Provider collected exactly `price + collateral` in both cases
+(`0.07 MON` on `CapacityMarket`, `0.03 MON` on `CapacityPool`), and the
+contract's balance returned to `0` after settlement — live confirmation
+that F1's fix (the default path losing `price` forever) didn't just pass in
+Foundry, it behaves correctly against a real chain. Representative
+transaction hashes: `listCapacity` 0x2ef9c44c…ed23b, `claimDelivery`
+0xeb6f1522…d709, `settle` 0xddf84f28…dd99 (`CapacityMarket`); `contribute`
+0xefd50828…db13, `settleAssignment` 0xdf771375…da51 (`CapacityPool`) — look
+any of these up on a Monad testnet explorer for the full trace.
+
+The original 2026-10-01 deploy (`CapacityMarket`
+`0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c`, `CapacityPool`
+`0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3`) still runs the **vulnerable**
+bytecode from before the red-team fixes — left live and verified
+deliberately, as part of this project's own audit trail, not reused for
+anything. Do not send value to it.
 
 ## Deploying to Monad testnet
 

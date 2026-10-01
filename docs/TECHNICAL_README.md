@@ -17,24 +17,30 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 71/71 tests passing total (including `test/RedTeam.t.sol`'s 6-test
 regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three confirmed
 and fixed findings). A first deploy went to Monad testnet (chain id 10143)
-on 2026-10-01 — `CapacityMarket` at
-`0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c`, `CapacityPool` at
-`0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3` — but a same-day red-team pass
-found and fixed three vulnerabilities in the source *after* that deploy;
-**those two addresses still run the vulnerable bytecode** until redeployed.
-Treat them as historical, not current, until `README.md`'s "Live on Monad
-testnet" section says otherwise. Not independently audited beyond this
-project's own red-team pass. Not deployed to mainnet.
+on 2026-10-01; a same-day red-team pass found and fixed three
+vulnerabilities in the source *after* that deploy, so it was redeployed the
+same day. Current, patched contracts: `CapacityMarket` at
+`0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f`, `CapacityPool` at
+`0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F` — see `README.md`'s "Live on
+Monad testnet" for the end-to-end transactions exercised against them. The
+original addresses (`0xb859aF02…`, `0x555C4340…`) still run the vulnerable
+bytecode and are kept live and verified as part of the audit trail, not for
+reuse. Not independently audited beyond this project's own red-team pass.
+Not deployed to mainnet.
 
-**What "deployed" means here, precisely, so it isn't overclaimed:** the
-bytecode is live and the source is verified exact-match — anyone can read
-and call the contracts. It does not mean anyone has used them yet: no
-capacity has been listed or contributed onchain, so every invariant above
-is still only demonstrated by the local Foundry test suite, not by live
-usage. A real exercise of the deployed contracts (list → reserve → activate
-→ claim → settle, run against the live testnet rather than Anvil) is
-worthwhile before treating this deployment as more than "the code is
-reachable."
+**What "deployed" means here, now that it's been exercised:** the current
+contracts were run end-to-end on the live testnet — `listCapacity` →
+`reserve` → `activate` → `acceptActivation` → `claimDelivery` → `settle` on
+`CapacityMarket`, and `contribute` → `reserve` → `activate` →
+`acceptAssignment` → `claimAssignmentDelivery` → `settleAssignment` on
+`CapacityPool` — with real MON, not Anvil. The provider's payout
+(`price + collateral` exactly, both times) and the contract's
+balance returning to `0` after settlement are now confirmed on a real
+chain, not only asserted by the local Foundry suite. What this single run
+does **not** demonstrate: the default/dispute/expire paths, concurrent
+activity from multiple buyers, or anything at the scale or adversarial
+conditions a live market would actually see — those remain demonstrated
+only by the test suite.
 
 ## What MUSTER is, precisely
 
