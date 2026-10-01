@@ -24,10 +24,10 @@ contract RedTeamTest is Test {
     uint256 constant COLLATERAL = 1 ether;
     uint64 constant SLA = 30 minutes;
     uint64 constant DISPUTE_WINDOW = 2 days;
-    address constant NO_ARBITRATOR = address(0);
 
     uint64 validFrom;
     uint64 validUntil;
+    address[] NO_PANEL; // CapacityMarket panel, Level 5
 
     function setUp() public {
         validFrom = uint64(block.timestamp);
@@ -43,7 +43,7 @@ contract RedTeamTest is Test {
     function test_F1_fixed_claimDefault_refunds_price_and_collateral_in_CapacityMarket() public {
         vm.prank(provider);
         uint256 positionId = market.listCapacity{value: COLLATERAL}(
-            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, NO_PANEL, 0, PRICE
         );
         vm.prank(buyer);
         market.reserve{value: PRICE}(positionId);
@@ -55,7 +55,7 @@ contract RedTeamTest is Test {
         uint256 buyerBefore = buyer.balance;
         market.claimDefault(positionId);
 
-        (,,,,,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
+        (,,,,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
         assertEq(uint8(status), uint8(CapacityMarket.Status.Defaulted));
         assertEq(buyer.balance, buyerBefore + PRICE + COLLATERAL, "buyer must recover both price and collateral");
         assertEq(address(market).balance, 0, "nothing should remain stuck in the contract");
@@ -68,7 +68,8 @@ contract RedTeamTest is Test {
             validUntil: validUntil,
             activationSLA: SLA,
             disputeWindow: DISPUTE_WINDOW,
-            arbitrator: NO_ARBITRATOR,
+            panelMembers: NO_PANEL,
+            panelThreshold: 0,
             pricePerUnit: PRICE,
             collateralPerUnit: COLLATERAL
         });
@@ -98,7 +99,7 @@ contract RedTeamTest is Test {
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.DurationTooLong.selector);
         market.listCapacity{value: 0}(
-            DOMAIN, 4, validFrom, validUntil, type(uint64).max, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE
+            DOMAIN, 4, validFrom, validUntil, type(uint64).max, DISPUTE_WINDOW, NO_PANEL, 0, PRICE
         );
     }
 
@@ -106,7 +107,7 @@ contract RedTeamTest is Test {
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.DurationTooLong.selector);
         market.listCapacity{value: COLLATERAL}(
-            DOMAIN, 4, validFrom, validUntil, SLA, type(uint64).max, NO_ARBITRATOR, PRICE
+            DOMAIN, 4, validFrom, validUntil, SLA, type(uint64).max, NO_PANEL, 0, PRICE
         );
     }
 
@@ -117,7 +118,8 @@ contract RedTeamTest is Test {
             validUntil: validUntil,
             activationSLA: type(uint64).max,
             disputeWindow: DISPUTE_WINDOW,
-            arbitrator: NO_ARBITRATOR,
+            panelMembers: NO_PANEL,
+            panelThreshold: 0,
             pricePerUnit: PRICE,
             collateralPerUnit: COLLATERAL
         });
@@ -142,7 +144,7 @@ contract RedTeamTest is Test {
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.DurationTooLong.selector);
         market.listCapacity{value: 0}(
-            DOMAIN, 4, validFrom, validUntil, type(uint64).max, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE
+            DOMAIN, 4, validFrom, validUntil, type(uint64).max, DISPUTE_WINDOW, NO_PANEL, 0, PRICE
         );
         // No position was ever created: nextPositionId did not advance.
         assertEq(market.nextPositionId(), 0);

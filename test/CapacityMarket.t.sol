@@ -18,10 +18,10 @@ contract CapacityMarketTest is Test {
     uint64 constant DISPUTE_WINDOW = 2 days;
     bytes32 constant EVIDENCE_HASH = keccak256("incident report #1");
     bytes32 constant REASON_HASH = keccak256("work did not match the incident report");
-    address constant NO_ARBITRATOR = address(0);
 
     uint64 validFrom;
     uint64 validUntil;
+    address[] NO_PANEL; // empty, set in setUp (storage array, can't be a constant)
 
     function setUp() public {
         validFrom = uint64(block.timestamp);
@@ -35,13 +35,19 @@ contract CapacityMarketTest is Test {
     }
 
     function _status(uint256 positionId) internal view returns (CapacityMarket.Status status) {
-        (,,,,,,,,,,,,,, status) = market.positions(positionId);
+        (,,,,,,,,,,,,, status) = market.positions(positionId);
     }
 
     function _list() internal returns (uint256 positionId) {
         vm.prank(provider);
+        positionId =
+            market.listCapacity{value: COLLATERAL}(DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, NO_PANEL, 0, PRICE);
+    }
+
+    function _listWithPanel(address[] memory panelMembers, uint256 threshold) internal returns (uint256 positionId) {
+        vm.prank(provider);
         positionId = market.listCapacity{value: COLLATERAL}(
-            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, panelMembers, threshold, PRICE
         );
     }
 
@@ -151,7 +157,6 @@ contract CapacityMarketTest is Test {
             ,
             ,
             address currentBuyer,
-            ,
             ,
             uint256 collateral,
             ,
@@ -286,7 +291,7 @@ contract CapacityMarketTest is Test {
     function test_invalid_window_reverts() public {
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.InvalidWindow.selector);
-        market.listCapacity(DOMAIN, 4, validUntil, validFrom, SLA, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE);
+        market.listCapacity(DOMAIN, 4, validUntil, validFrom, SLA, DISPUTE_WINDOW, NO_PANEL, 0, PRICE);
     }
 
     // --- Duration bound (SECURITY_AUDIT 2026-10-01 findings F2/F3) ----------
@@ -296,7 +301,7 @@ contract CapacityMarketTest is Test {
 
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.DurationTooLong.selector);
-        market.listCapacity(DOMAIN, 4, validFrom, validUntil, tooLong, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE);
+        market.listCapacity(DOMAIN, 4, validFrom, validUntil, tooLong, DISPUTE_WINDOW, NO_PANEL, 0, PRICE);
     }
 
     function test_listCapacity_rejects_disputeWindow_above_MAX_DURATION() public {
@@ -304,7 +309,7 @@ contract CapacityMarketTest is Test {
 
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.DurationTooLong.selector);
-        market.listCapacity(DOMAIN, 4, validFrom, validUntil, SLA, tooLong, NO_ARBITRATOR, PRICE);
+        market.listCapacity(DOMAIN, 4, validFrom, validUntil, SLA, tooLong, NO_PANEL, 0, PRICE);
     }
 
     function test_listCapacity_accepts_activationSLA_and_disputeWindow_at_MAX_DURATION() public {
@@ -312,19 +317,14 @@ contract CapacityMarketTest is Test {
 
         vm.prank(provider);
         uint256 positionId = market.listCapacity{value: COLLATERAL}(
-            DOMAIN, 4, validFrom, validUntil, maxDuration, maxDuration, NO_ARBITRATOR, PRICE
+            DOMAIN, 4, validFrom, validUntil, maxDuration, maxDuration, NO_PANEL, 0, PRICE
         );
         assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Listed));
     }
 
-    // --- Level 4: designated-arbitrator dispute resolution ------------------
+    // --- Level 4/5: arbitration panels (single arbitrator is the M=1,N=1 case) ---
 
-    function test_resolveDispute_arbitrator_rules_for_provider() public {
-        address arbitrator = makeAddr("arbitrator");
-        vm.prank(provider);
-        uint256 positionId = market.listCapacity{value: COLLATERAL}(
-            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, arbitrator, PRICE
-        );
+    function _toDisputed(uint256 positionId) internal {
         vm.prank(buyer);
         market.reserve{value: PRICE}(positionId);
         vm.prank(buyer);
@@ -335,77 +335,97 @@ contract CapacityMarketTest is Test {
         market.claimDelivery(positionId, EVIDENCE_HASH);
         vm.prank(buyer);
         market.dispute(positionId, REASON_HASH);
+    }
+
+    function test_listCapacity_rejects_oversized_panel() public {
+        address[] memory tooMany = new address[](market.MAX_PANEL_SIZE() + 1);
+        for (uint256 i = 0; i < tooMany.length; i++) {
+            tooMany[i] = makeAddr(string.concat("member", vm.toString(i)));
+        }
+        vm.prank(provider);
+        vm.expectRevert(CapacityMarket.InvalidPanel.selector);
+        market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, tooMany, 1, PRICE
+        );
+    }
+
+    function test_listCapacity_rejects_threshold_above_panel_size() public {
+        address[] memory panel = new address[](2);
+        panel[0] = makeAddr("m0");
+        panel[1] = makeAddr("m1");
+
+        vm.prank(provider);
+        vm.expectRevert(CapacityMarket.InvalidPanel.selector);
+        market.listCapacity{value: COLLATERAL}(DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, panel, 3, PRICE);
+    }
+
+    function test_listCapacity_rejects_nonzero_threshold_with_empty_panel() public {
+        vm.prank(provider);
+        vm.expectRevert(CapacityMarket.InvalidPanel.selector);
+        market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, NO_PANEL, 1, PRICE
+        );
+    }
+
+    /// @notice A single trusted arbitrator (Level 4) is exactly the
+    /// members.length == 1, threshold == 1 case of a panel. One vote settles it.
+    function test_voteDispute_single_member_panel_settles_like_Level4_arbitrator() public {
+        address arbitrator = makeAddr("arbitrator");
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 positionId = _listWithPanel(panel, 1);
+        _toDisputed(positionId);
 
         uint256 providerBefore = provider.balance;
         vm.prank(arbitrator);
-        market.resolveDispute(positionId, true);
+        market.voteDispute(positionId, true);
 
         assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Settled));
         assertEq(provider.balance, providerBefore + PRICE + COLLATERAL);
     }
 
-    function test_resolveDispute_arbitrator_rules_for_buyer() public {
+    function test_voteDispute_rules_for_buyer() public {
         address arbitrator = makeAddr("arbitrator");
-        vm.prank(provider);
-        uint256 positionId = market.listCapacity{value: COLLATERAL}(
-            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, arbitrator, PRICE
-        );
-        vm.prank(buyer);
-        market.reserve{value: PRICE}(positionId);
-        vm.prank(buyer);
-        market.activate(positionId);
-        vm.prank(provider);
-        market.acceptActivation(positionId);
-        vm.prank(provider);
-        market.claimDelivery(positionId, EVIDENCE_HASH);
-        vm.prank(buyer);
-        market.dispute(positionId, REASON_HASH);
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 positionId = _listWithPanel(panel, 1);
+        _toDisputed(positionId);
 
         uint256 buyerBefore = buyer.balance;
         vm.prank(arbitrator);
-        market.resolveDispute(positionId, false);
+        market.voteDispute(positionId, false);
 
         assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Refunded));
         assertEq(buyer.balance, buyerBefore + PRICE + COLLATERAL);
     }
 
-    function test_resolveDispute_by_non_arbitrator_reverts() public {
+    function test_voteDispute_by_non_member_reverts() public {
         address arbitrator = makeAddr("arbitrator");
-        vm.prank(provider);
-        uint256 positionId = market.listCapacity{value: COLLATERAL}(
-            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, arbitrator, PRICE
-        );
-        vm.prank(buyer);
-        market.reserve{value: PRICE}(positionId);
-        vm.prank(buyer);
-        market.activate(positionId);
-        vm.prank(provider);
-        market.acceptActivation(positionId);
-        vm.prank(provider);
-        market.claimDelivery(positionId, EVIDENCE_HASH);
-        vm.prank(buyer);
-        market.dispute(positionId, REASON_HASH);
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 positionId = _listWithPanel(panel, 1);
+        _toDisputed(positionId);
 
-        vm.prank(buyer); // not the named arbitrator
+        vm.prank(buyer); // not a panel member
         vm.expectRevert(CapacityMarket.NotArbitrator.selector);
-        market.resolveDispute(positionId, true);
+        market.voteDispute(positionId, true);
     }
 
-    /// @notice A position opted out of arbitration (arbitrator == address(0))
-    /// must fall back to the exact Level 3 behavior: nobody can ever call
-    /// resolveDispute successfully, only resolveDisputeByTimeout applies.
-    function test_resolveDispute_reverts_for_everyone_when_no_arbitrator_named() public {
-        uint256 positionId = _throughDeliveryClaimed(); // listed via _list(), NO_ARBITRATOR
+    /// @notice A position opted out of arbitration (empty panel) must fall
+    /// back to the exact Level 3 behavior: nobody can ever vote, only
+    /// resolveDisputeByTimeout applies.
+    function test_voteDispute_reverts_for_everyone_when_panel_is_empty() public {
+        uint256 positionId = _throughDeliveryClaimed(); // listed via _list(), empty panel
         vm.prank(buyer);
         market.dispute(positionId, REASON_HASH);
 
         vm.prank(buyer);
         vm.expectRevert(CapacityMarket.NotArbitrator.selector);
-        market.resolveDispute(positionId, true);
+        market.voteDispute(positionId, true);
 
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.NotArbitrator.selector);
-        market.resolveDispute(positionId, true);
+        market.voteDispute(positionId, true);
 
         // The timeout fallback still works exactly as in Level 3.
         vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
@@ -414,27 +434,17 @@ contract CapacityMarketTest is Test {
         assertEq(buyer.balance, buyerBefore + PRICE + COLLATERAL);
     }
 
-    function test_resolveDispute_races_resolveDisputeByTimeout_arbitrator_first_wins() public {
+    function test_voteDispute_races_resolveDisputeByTimeout_vote_first_wins() public {
         address arbitrator = makeAddr("arbitrator");
-        vm.prank(provider);
-        uint256 positionId = market.listCapacity{value: COLLATERAL}(
-            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, arbitrator, PRICE
-        );
-        vm.prank(buyer);
-        market.reserve{value: PRICE}(positionId);
-        vm.prank(buyer);
-        market.activate(positionId);
-        vm.prank(provider);
-        market.acceptActivation(positionId);
-        vm.prank(provider);
-        market.claimDelivery(positionId, EVIDENCE_HASH);
-        vm.prank(buyer);
-        market.dispute(positionId, REASON_HASH);
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 positionId = _listWithPanel(panel, 1);
+        _toDisputed(positionId);
 
         vm.warp(block.timestamp + DISPUTE_WINDOW + 1); // timeout window has passed too
 
         vm.prank(arbitrator);
-        market.resolveDispute(positionId, true); // arbitrator still gets to rule
+        market.voteDispute(positionId, true); // arbitrator still gets to rule
 
         assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Settled));
 
@@ -444,6 +454,92 @@ contract CapacityMarketTest is Test {
             )
         );
         market.resolveDisputeByTimeout(positionId); // already resolved, cannot double-pay
+    }
+
+    /// @notice The real M-of-N case: a 3-member panel with threshold 2.
+    /// Neither side's vote alone decides it; the second matching vote does.
+    function test_voteDispute_three_member_panel_needs_two_matching_votes() public {
+        address a1 = makeAddr("a1");
+        address a2 = makeAddr("a2");
+        address a3 = makeAddr("a3");
+        address[] memory panel = new address[](3);
+        panel[0] = a1;
+        panel[1] = a2;
+        panel[2] = a3;
+        uint256 positionId = _listWithPanel(panel, 2);
+        _toDisputed(positionId);
+
+        vm.prank(a1);
+        market.voteDispute(positionId, true); // 1 vote for provider: not enough yet
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Disputed));
+
+        vm.prank(a2);
+        market.voteDispute(positionId, false); // split 1-1: still not enough
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Disputed));
+
+        uint256 buyerBefore = buyer.balance;
+        vm.prank(a3);
+        market.voteDispute(positionId, false); // 2 votes for buyer: threshold reached
+
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Refunded));
+        assertEq(buyer.balance, buyerBefore + PRICE + COLLATERAL);
+    }
+
+    function test_voteDispute_member_cannot_vote_twice() public {
+        address arbitrator = makeAddr("arbitrator");
+        address[] memory panel = new address[](3);
+        panel[0] = arbitrator;
+        panel[1] = makeAddr("a2");
+        panel[2] = makeAddr("a3");
+        uint256 positionId = _listWithPanel(panel, 2);
+        _toDisputed(positionId);
+
+        vm.prank(arbitrator);
+        market.voteDispute(positionId, true);
+
+        vm.prank(arbitrator);
+        vm.expectRevert(CapacityMarket.AlreadyVoted.selector);
+        market.voteDispute(positionId, true);
+    }
+
+    function test_voteDispute_after_verdict_executed_reverts() public {
+        address a1 = makeAddr("a1");
+        address a2 = makeAddr("a2");
+        address a3 = makeAddr("a3");
+        address[] memory panel = new address[](3);
+        panel[0] = a1;
+        panel[1] = a2;
+        panel[2] = a3;
+        uint256 positionId = _listWithPanel(panel, 2);
+        _toDisputed(positionId);
+
+        vm.prank(a1);
+        market.voteDispute(positionId, true);
+        vm.prank(a2);
+        market.voteDispute(positionId, true); // threshold reached, verdict executes
+
+        vm.prank(a3);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityMarket.WrongStatus.selector, CapacityMarket.Status.Disputed, CapacityMarket.Status.Settled
+            )
+        );
+        market.voteDispute(positionId, false); // too late, already Settled
+    }
+
+    function test_arbitrationPanel_view_returns_members_and_threshold() public {
+        address a1 = makeAddr("a1");
+        address a2 = makeAddr("a2");
+        address[] memory panel = new address[](2);
+        panel[0] = a1;
+        panel[1] = a2;
+        uint256 positionId = _listWithPanel(panel, 2);
+
+        (address[] memory members, uint256 threshold) = market.arbitrationPanel(positionId);
+        assertEq(members.length, 2);
+        assertEq(members[0], a1);
+        assertEq(members[1], a2);
+        assertEq(threshold, 2);
     }
 
     // --- Level 3: delivery claims and disputes -------------------------

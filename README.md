@@ -106,24 +106,29 @@ position.
 claim and a bounded response window, with a timeout path on each side so
 neither a silent buyer nor an unresolved dispute can lock funds forever.
 
-**Level 4**: a position can name an `arbitrator` — visible before anyone
-reserves, like every other term. Once a dispute is raised, that address can
-rule for either side, any time, racing the timeout fallback above (whoever
-acts first wins). No arbitrator named (`address(0)`, the default) means
-the position behaves exactly as it did at Level 3. What this still doesn't
-do: guarantee the arbitrator is independent or honest — that's a trust
-assumption the buyer accepts by reserving a position that names one, not
-something a contract can verify. Genuinely trust-minimized adjudication
-(staking, an appeals path) is the next level, named in the Technical
+**Level 4/5**: a position can define an arbitration panel — a list of
+addresses and a threshold, visible before anyone reserves, like every other
+term. Once a dispute is raised, any panel member can vote for either side;
+once either side's votes reach the threshold, that verdict executes,
+racing the timeout fallback above (whoever gets there first wins). A single
+trusted arbitrator (Level 4) is just the one-member, threshold-one case —
+Level 5 generalized it to M-of-N so no single address has to be trusted
+alone. No panel named (empty, the default) means the position behaves
+exactly as it did at Level 3. What this still doesn't do: guarantee the
+panel is independent, honest, or even genuinely separate people — that's a
+trust assumption the buyer accepts by reserving a position that names one,
+not something a contract can verify, and there's no stake or slashing
+behind a vote. Genuinely trust-minimized adjudication (staking, an appeals
+path, an independent oracle) is the next level, named in the Technical
 README.
 
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`).
-- 80/80 tests passing (`test/`), covering all four levels' lifecycles,
+- 91/91 tests passing (`test/`), covering all five levels' lifecycles,
   every invariant violation, and a permanent regression suite for the
   red-team findings below.
-- Live on Monad testnet with the current Level 4 bytecode (see "Live on
-  Monad testnet" below).
+- Live on Monad testnet with the Level 4 bytecode (single arbitrator, not
+  yet the Level 5 panel — see "Live on Monad testnet" below).
 
 ```bash
 forge build

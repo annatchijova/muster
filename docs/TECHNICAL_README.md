@@ -9,25 +9,26 @@ for that.
 Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 
 - **Level 1 — `CapacityMarket.sol`**: single-provider capacity position, full
-  lifecycle plus Level 3's delivery-claim/dispute flow and Level 4's
-  designated-arbitrator resolution. 36/36 tests passing.
+  lifecycle plus Level 3's delivery-claim/dispute flow and Level 4/5's
+  M-of-N arbitration panels. 43/43 tests passing.
 - **Level 2 — `CapacityPool.sol`**: fungible, multi-provider capacity pooled
-  by domain class, routed FIFO at activation, same Level 3/4 flow at the
-  per-assignment grain. 38/38 tests passing.
+  by domain class, routed FIFO at activation, same Level 3/4/5 flow at the
+  per-assignment grain. 42/42 tests passing.
 
-80/80 tests passing total (including `test/RedTeam.t.sol`'s 6-test
+91/91 tests passing total (including `test/RedTeam.t.sol`'s 6-test
 regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three confirmed
-and fixed findings). Three generations of deploy to Monad testnet (chain id
+and fixed findings). Four generations of deploy to Monad testnet (chain id
 10143), all kept live and verified as this project's own audit trail — see
 `README.md`'s "Live on Monad testnet" for every address and which is
-current. Current (Level 4): `CapacityMarket` at
+current. Current (Level 5): `CapacityMarket` at
 `0x1224950b84a86f57cB4AE838D372879960862896`, `CapacityPool` at
-`0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` — **not yet exercised live**,
-only in Foundry. The prior (pre-Level-4, patched) pair was exercised
-end-to-end with real MON before Level 4 made its ABI stale; the original
-pair before that is the still-vulnerable pre-audit deploy. Not
-independently audited beyond this project's own red-team pass. Not
-deployed to mainnet.
+`0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` — these are the **Level 4**
+contracts (single `arbitrator` field, not yet the panel mechanism); Level 5
+changed the ABI again (`arbitrator` → `panelMembers`/`panelThreshold`) and
+has not been deployed yet. The pre-Level-4 pair was exercised end-to-end
+with real MON; everything before that is the still-vulnerable pre-audit
+deploy. Not independently audited beyond this project's own red-team pass.
+Not deployed to mainnet.
 
 **What "deployed" means here, for the pre-Level-4 pair that was actually
 exercised:** those contracts were run end-to-end on the live testnet — `listCapacity` →
@@ -215,49 +216,79 @@ mechanism (Level 4) before `resolveDisputeByTimeout`'s window would ever
 need to fire in practice. Tests: `test_resolveDisputeByTimeout_before_window_reverts`,
 `test_resolveDisputeByTimeout_refunds_buyer_after_window`.
 
-### Level 4: designated-arbitrator dispute resolution
+### Level 4/5: arbitration panels (M-of-N, with a single arbitrator as the M=1 case)
 
-A position may name an `arbitrator` at `listCapacity` time — a public field,
-visible to a buyer before they ever reserve, the same as `price` or
-`activationSLA`. Once a position is `Disputed`, that exact address (and only
-that address) may call `resolveDispute(positionId, providerWins)` to rule
-the claim one way or the other, on whatever offchain basis they choose:
-`providerWins == true` pays `price + collateral` to the provider (same
-amount `settle`/`finalizeDelivery` would have paid); `false` refunds the
-buyer (same amount `resolveDisputeByTimeout` would have paid). The contract
-never evaluates the dispute itself — it only records and pays out whichever
-verdict the named arbitrator returns.
+A position may define an arbitration panel at `listCapacity` time —
+`panelMembers` (an address list) and `panelThreshold` (how many matching
+votes execute a verdict) — public fields, visible to a buyer before they
+ever reserve, the same as `price` or `activationSLA`. Once a position is
+`Disputed`, any panel member may call `voteDispute(positionId,
+providerWins)`; once either side's vote count reaches `panelThreshold`,
+that verdict executes automatically: `true` pays `price + collateral` to
+the provider (same amount `settle`/`finalizeDelivery` would have paid),
+`false` refunds the buyer (same amount `resolveDisputeByTimeout` would have
+paid). The contract never evaluates the dispute itself — it only tallies
+votes and pays out whichever verdict crosses the threshold first.
 
-**No priority window for the arbitrator — it's a race, by design.**
-`resolveDispute` has no deadline of its own; it is only gated by the
-position still being `Disputed`. `resolveDisputeByTimeout` is similarly
-gated, after its own window. Whichever call lands first wins, enforced by
-the ordinary `inStatus` guard — not a special priority rule. This is the
-same pattern `acceptActivation` vs. `claimDefault` and `settle` vs.
-`finalizeDelivery` already use elsewhere in this contract: a privileged,
-no-deadline path racing a permissionless, deadline-gated fallback. Test:
-`test_resolveDispute_races_resolveDisputeByTimeout_arbitrator_first_wins`.
+**A single trusted arbitrator is not a separate feature — it's
+`panelMembers.length == 1, panelThreshold == 1`.** This was originally
+built as Level 4 with one dedicated `arbitrator` field and a
+`resolveDispute` function; Level 5 replaced both with the general panel
+mechanism rather than keeping two parallel code paths, because the single-
+arbitrator case is exactly what a size-1 panel with threshold 1 already
+does — one vote reaches the threshold immediately. Test:
+`test_voteDispute_single_member_panel_settles_like_Level4_arbitrator`. The
+real M-of-N case — no single vote decides it, a second matching vote does —
+is exercised in `test_voteDispute_three_member_panel_needs_two_matching_votes`.
 
-**Opting out is free and total.** `arbitrator == address(0)` (the default
-unless a provider sets otherwise) makes `resolveDispute` revert
-`NotArbitrator()` for every possible caller, unconditionally — no real
-transaction can originate from the zero address — so a position with no
-named arbitrator behaves exactly as it did at Level 3. Test:
-`test_resolveDispute_reverts_for_everyone_when_no_arbitrator_named`.
+**No priority window for the panel — it's a race, by design.** `voteDispute`
+has no deadline of its own; it is only gated by the position still being
+`Disputed`. `resolveDisputeByTimeout` is similarly gated, after its own
+window. Whichever call lands first wins, enforced by the ordinary
+`inStatus` guard — not a special priority rule. This is the same pattern
+`acceptActivation` vs. `claimDefault` and `settle` vs. `finalizeDelivery`
+already use elsewhere in this contract: a privileged, no-deadline path
+racing a permissionless, deadline-gated fallback. Test:
+`test_voteDispute_races_resolveDisputeByTimeout_vote_first_wins`.
+
+**Opting out is free and total.** An empty `panelMembers` array (with
+`panelThreshold == 0`, enforced at `listCapacity`) makes `voteDispute`
+revert `NotArbitrator()` for every possible caller — an empty array has no
+member for any address to match — so a position with no panel behaves
+exactly as it did at Level 3. Test:
+`test_voteDispute_reverts_for_everyone_when_panel_is_empty`.
+
+**Bounded, like every other externally-chosen size that feeds a loop in
+this project.** `voteDispute` scans `panel.members` linearly to check
+membership; `MAX_PANEL_SIZE = 9` caps it, enforced at `listCapacity`,
+following the exact precedent `MAX_DURATION` set for `activationSLA`/
+`disputeWindow` after findings F2/F3 — bound any value that feeds an
+operation whose cost scales with it, at the point it's set, not after
+someone picks a degenerate value. Test:
+`test_listCapacity_rejects_oversized_panel`.
+
+**A member votes once; votes don't change.** Tracked per `(positionId,
+voter)`; a repeat call reverts `AlreadyVoted()`
+(`test_voteDispute_member_cannot_vote_twice`). No vote-revocation or
+vote-changing mechanism exists — a deliberate scope limit, not an
+oversight; see "Known limitations" below.
 
 **What this does NOT solve, by design, not oversight:** the contract cannot
-verify an arbitrator's independence. A provider can name themselves, or a
-colluding address, as their own position's arbitrator, and nothing in the
-contract stops it. No code-level restriction (e.g. `require(arbitrator !=
+verify panel members' independence. A provider can name themselves, or M
+colluding addresses, as their own position's panel, and nothing in the
+contract stops it. No code-level restriction (e.g. `require(member !=
 provider)`) was added, deliberately: it would be trivially defeated by
-naming a second, nominally-unrelated address instead, so it would create
-the appearance of a safeguard without providing one. `arbitrator` is, like
+naming a nominally-unrelated address instead, so it would create the
+appearance of a safeguard without providing one. A panel is, like
 `activationSLA`, `disputeWindow`, and `collateral`, a term the buyer can and
-should check before reserving — a self-dealing arbitrator is visible
+should check before reserving — a stacked or self-dealing panel is visible
 on-chain before any commitment is made, the same way a zero-day dispute
 window is. See "Discarded (non-exploitable) vectors" in
 `docs/SECURITY_AUDIT_2026-10-01.md` for the identical reasoning applied to
-`disputeWindow = 0`.
+`disputeWindow = 0`. Nor is there any stake or slashing behind a vote: a
+panel member who votes dishonestly or carelessly faces no onchain
+consequence beyond reputational — M trust assumptions instead of one is
+real progress over Level 4, but it is still trust, not trust-minimization.
 
 ---
 
@@ -289,7 +320,8 @@ struct TermsClass {
     uint64 validUntil;
     uint64 activationSLA;
     uint64 disputeWindow;
-    address arbitrator;
+    address[] panelMembers;
+    uint256 panelThreshold;
     uint256 pricePerUnit;
     uint256 collateralPerUnit;
 }
@@ -328,28 +360,31 @@ reserve(classId, qty) ──▶ Reservation{Reserved}         [available -= qty]
               │   Settled              Disputed
               │   (price+collateral      │    │  resolveAssignmentDisputeByTimeout()
               │    → provider)           │    │  [anyone, after a second disputeWindow]
-              │        resolveAssignmentDispute()  ──▶ Refunded (price+collateral → buyer)
-              │        [class's named arbitrator, any time while Disputed]
-              │              ├─ providerWins=true  ──▶ Settled (price+collateral → provider)
-              │              └─ providerWins=false ──▶ Refunded (price+collateral → buyer)
+              │                          │    ▼
+              │                          │  Refunded (price+collateral → buyer)
+              │              voteAssignmentDispute(providerWins)
+              │              [any panel member, any time while Disputed —
+              │               verdict executes once either side reaches panelThreshold]
+              │              ├─ providerWins reaches threshold ──▶ Settled (price+collateral → provider)
+              │              └─ buyerWins reaches threshold    ──▶ Refunded (price+collateral → buyer)
               │
               │   finalizeAssignmentDelivery() [anyone, after disputeDeadline,
               │     if buyer never settled/disputed] ──▶ Settled
               │
               └─ claimAssignmentDefault() [SLA missed, from Pending] ──▶ Assignment{Defaulted}
-                       (collateral → buyer)
+                       (price+collateral → buyer)
 
 withdrawContribution()  [window closed, any time] ──▶ pays collateral for
                           a contribution's unassigned `remaining`, to its provider
 ```
 
-`resolveAssignmentDispute` mirrors `CapacityMarket.resolveDispute` exactly —
-same no-deadline race against the timeout fallback, same unconditional
-revert when the class opted out (`arbitrator == address(0)`), same
-"visible term, not a verifiable-independence guarantee" caveat. See "Level
-4: designated-arbitrator dispute resolution" above; nothing about it
-differs at the pool grain except operating on one `Assignment` instead of a
-whole position, so ruling on one disputed slice never touches a sibling's.
+`voteAssignmentDispute` mirrors `CapacityMarket.voteDispute` exactly — same
+no-deadline race against the timeout fallback, same unconditional revert
+when the class opted out (empty `panelMembers`), same one-vote-per-member,
+same "visible term, not a verifiable-independence guarantee" caveat. See
+"Level 4/5: arbitration panels" above; nothing about it differs at the pool
+grain except operating on one `Assignment` instead of a whole position, so
+votes and verdicts on one disputed slice never touch a sibling's.
 
 Each `Assignment` is independent: one provider's default, or one slice being
 disputed, does not affect a sibling assignment from another provider in the
@@ -466,13 +501,13 @@ to a hash — the contract never interprets what the hash points to, and
 nothing stops a provider from hashing fabricated evidence. `dispute`/
 `disputeAssignment` only prove the buyer objected and when — not that the
 objection is correct. **This remains a known, stated limitation, not an
-oversight, even after Level 3**: Level 3 makes delivery an explicit,
-timestamped, two-sided claim instead of a silent buyer-honesty call, and
-guarantees every path through it terminates in a payout (see invariant 6
-above) — it does not, and does not claim to, adjudicate whether a dispute is
-justified. Real adjudication (reviewing the evidence behind `evidenceHash`
-and `reasonHash`, weighing them, issuing a non-default verdict) is Level 4's
-explicit target, named below.
+oversight, even after Level 5**: panels let a dispute resolve on its merits
+instead of only the conservative timeout, and spreading trust across M
+members is real progress over one arbitrator — but the contract still
+cannot evaluate `evidenceHash`/`reasonHash` itself, verify a panel's
+independence, or impose any consequence on a member who votes in bad faith.
+Real trust-minimization (staking, slashing, an oracle reading evidence
+independently) is Level 6's explicit target, named below.
 
 ## Known limitations and next levels
 
@@ -480,15 +515,13 @@ Per the project's construction discipline (destination-driven, not
 MVP-driven — see `AGENTS.md`), named as the next coherent levels toward the
 destination, not patches on a throwaway prototype:
 
-- **Single-arbitrator trust, not decentralized adjudication (Level 5).**
-  Level 4 lets a dispute resolve on its merits via a designated arbitrator
-  instead of only the conservative timeout, but that arbitrator is one
-  trusted address the buyer accepted by reserving — no staking, no
-  slashing for a bad-faith ruling, no multi-party quorum, no oracle reading
-  offchain evidence independently. A corrupt or careless arbitrator can
-  still rule wrongly with no onchain consequence beyond reputational. Staked
-  jurors, an appeals path, or an oracle-fed verdict would be the next
-  coherent level toward genuinely trust-minimized adjudication.
+- **Trusted panel, not staked/slashed adjudication (Level 6).** Level 5's
+  M-of-N panel removes the single point of trust Level 4 had, but a vote
+  still carries no economic weight — no bond posted to vote, no slashing
+  for a provably bad-faith verdict, no appeals path if the panel itself
+  colludes or is captured. An oracle reading `evidenceHash`/`reasonHash`
+  independently, or a staked-juror mechanism with slashing, would be the
+  next coherent level toward genuinely trust-minimized adjudication.
 - **Push-payment griefing.** `_payout` uses `.call` and requires success. A
   recipient whose fallback always reverts can block their *own* payout path
   (a provider blocking their own `expire`, a buyer blocking their own
@@ -519,8 +552,8 @@ forge build
 forge test
 ```
 
-Last run: 80/80 tests passed (`CapacityMarket.t.sol`: 36,
-`CapacityPool.t.sol`: 38, `RedTeam.t.sol`: 6). This proves the invariants
+Last run: 91/91 tests passed (`CapacityMarket.t.sol`: 43,
+`CapacityPool.t.sol`: 42, `RedTeam.t.sol`: 6). This proves the invariants
 stated above hold under the specific scenarios each test encodes,
 including the three historical vulnerabilities in
 `docs/SECURITY_AUDIT_2026-10-01.md` staying fixed. It does not constitute an

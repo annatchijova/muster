@@ -31,13 +31,16 @@ pragma solidity ^0.8.24;
 /// proven never to be violated by `activate()`'s FIFO walk — see
 /// docs/TECHNICAL_README.md "Why activate() cannot run out of capacity".
 ///
-/// Level 4 addition, mirroring `CapacityMarket`: a `TermsClass` may name an
-/// `arbitrator` (shared by every assignment drawn from that class, like
-/// `activationSLA`/`disputeWindow`; `address(0)` opts the whole class out).
-/// Once an assignment is `Disputed`, that address may call
-/// `resolveAssignmentDispute` to rule for the buyer or the provider.
-/// `resolveAssignmentDisputeByTimeout` still fires if they never act — see
-/// `CapacityMarket.resolveDispute`'s NatSpec for the full reasoning.
+/// Level 4/5 addition, mirroring `CapacityMarket`: a `TermsClass` may define
+/// an arbitration panel (`panelMembers`/`panelThreshold`), shared by every
+/// assignment drawn from that class, like `activationSLA`/`disputeWindow`.
+/// An empty panel opts the whole class out. Once an assignment is
+/// `Disputed`, any panel member may `voteAssignmentDispute`; once either
+/// side's votes reach `panelThreshold`, that verdict executes. A single
+/// trusted arbitrator (Level 4) is just the `panelMembers.length == 1,
+/// panelThreshold == 1` case. `resolveAssignmentDisputeByTimeout` still
+/// fires if the panel never reaches threshold — see
+/// `CapacityMarket.voteDispute`'s NatSpec for the full reasoning.
 contract CapacityPool {
     enum AssignmentStatus {
         Pending,
@@ -55,13 +58,20 @@ contract CapacityPool {
         Expired
     }
 
+    enum DisputeVote {
+        None,
+        ProviderWins,
+        BuyerWins
+    }
+
     struct TermsClass {
         bytes32 domain;
         uint64 validFrom;
         uint64 validUntil;
         uint64 activationSLA;
         uint64 disputeWindow;
-        address arbitrator;
+        address[] panelMembers;
+        uint256 panelThreshold;
         uint256 pricePerUnit;
         uint256 collateralPerUnit;
     }
@@ -103,6 +113,10 @@ contract CapacityPool {
     uint256 public nextReservationId;
     mapping(uint256 => Reservation) private reservations;
 
+    mapping(uint256 => mapping(uint256 => mapping(address => DisputeVote))) private disputeVotes;
+    mapping(uint256 => mapping(uint256 => uint256)) private providerVoteCount;
+    mapping(uint256 => mapping(uint256 => uint256)) private buyerVoteCount;
+
     event Contributed(bytes32 indexed classId, address indexed provider, uint256 quantity, uint256 collateral);
     event Reserved(uint256 indexed reservationId, bytes32 indexed classId, address indexed buyer, uint256 quantity);
     event ReservationTransferred(uint256 indexed reservationId, address indexed from, address indexed to);
@@ -118,9 +132,15 @@ contract CapacityPool {
     event AssignmentDefaulted(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed provider);
     event AssignmentSettled(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed provider);
     event AssignmentRefunded(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed buyer);
-    event AssignmentDisputeResolved(
-        uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed arbitrator, bool providerWon
+    event AssignmentDisputeVoteCast(
+        uint256 indexed reservationId,
+        uint256 indexed assignmentIndex,
+        address indexed voter,
+        bool providerWins,
+        uint256 providerVotes,
+        uint256 buyerVotes
     );
+    event AssignmentDisputeResolved(uint256 indexed reservationId, uint256 indexed assignmentIndex, bool providerWon);
     event ContributionWithdrawn(bytes32 indexed classId, uint256 indexed index, address indexed provider, uint256 amount);
 
     error InvalidWindow();
@@ -129,6 +149,8 @@ contract CapacityPool {
     error NotBuyer();
     error NotProvider();
     error NotArbitrator();
+    error InvalidPanel();
+    error AlreadyVoted();
     error WrongReservationStatus(ReservationStatus expected, ReservationStatus actual);
     error WrongAssignmentStatus(AssignmentStatus expected, AssignmentStatus actual);
     error WindowNotOpen();
@@ -145,6 +167,10 @@ contract CapacityPool {
     /// constant's NatSpec and docs/SECURITY_AUDIT_2026-10-01.md findings
     /// F2/F3 for why an unbounded duration here is exploitable.
     uint64 public constant MAX_DURATION = 365 days;
+
+    /// @notice Upper bound on a terms class's arbitration panel size.
+    /// Mirrors `CapacityMarket.MAX_PANEL_SIZE` — see that constant's NatSpec.
+    uint256 public constant MAX_PANEL_SIZE = 9;
 
     modifier reservationInStatus(uint256 reservationId, ReservationStatus expected) {
         ReservationStatus actual = reservations[reservationId].status;
@@ -167,6 +193,12 @@ contract CapacityPool {
         if (terms.validUntil <= terms.validFrom) revert InvalidWindow();
         if (quantity == 0) revert WrongValue();
         if (terms.activationSLA > MAX_DURATION || terms.disputeWindow > MAX_DURATION) revert DurationTooLong();
+        if (terms.panelMembers.length > MAX_PANEL_SIZE) revert InvalidPanel();
+        if (terms.panelMembers.length == 0) {
+            if (terms.panelThreshold != 0) revert InvalidPanel();
+        } else if (terms.panelThreshold == 0 || terms.panelThreshold > terms.panelMembers.length) {
+            revert InvalidPanel();
+        }
         if (msg.value != terms.collateralPerUnit * quantity) revert WrongValue();
 
         id = classId(terms);
@@ -426,30 +458,63 @@ contract CapacityPool {
         _payout(r.buyer, a.price + a.collateral);
     }
 
-    /// @notice The class's named arbitrator rules on one assignment's
-    /// dispute. Mirrors `CapacityMarket.resolveDispute` exactly — same
-    /// no-deadline race against `resolveAssignmentDisputeByTimeout`, same
-    /// unconditional revert if the class opted out (`arbitrator ==
-    /// address(0)`). Scoped to one assignment: ruling on one provider's
-    /// disputed slice has no effect on a sibling assignment's dispute.
-    function resolveAssignmentDispute(uint256 reservationId, uint256 assignmentIndex, bool providerWins)
+    /// @notice A member of the class's arbitration panel casts one vote on
+    /// one assignment's dispute. Mirrors `CapacityMarket.voteDispute`
+    /// exactly — same no-deadline race against
+    /// `resolveAssignmentDisputeByTimeout`, same unconditional revert if the
+    /// class opted out (empty panel). Scoped to one assignment: votes and
+    /// verdicts on one provider's disputed slice have no effect on a
+    /// sibling assignment's dispute, even within the same reservation.
+    function voteAssignmentDispute(uint256 reservationId, uint256 assignmentIndex, bool providerWins)
         external
         reservationInStatus(reservationId, ReservationStatus.Activated)
     {
         Reservation storage r = reservations[reservationId];
         Assignment storage a = r.assignments[assignmentIndex];
         if (a.status != AssignmentStatus.Disputed) revert WrongAssignmentStatus(AssignmentStatus.Disputed, a.status);
-        if (msg.sender != pools[r.classId].terms.arbitrator) revert NotArbitrator();
 
+        address[] storage members = pools[r.classId].terms.panelMembers;
+        bool isMember = false;
+        for (uint256 i = 0; i < members.length; i++) {
+            if (members[i] == msg.sender) {
+                isMember = true;
+                break;
+            }
+        }
+        if (!isMember) revert NotArbitrator();
+        if (disputeVotes[reservationId][assignmentIndex][msg.sender] != DisputeVote.None) revert AlreadyVoted();
+
+        disputeVotes[reservationId][assignmentIndex][msg.sender] =
+            providerWins ? DisputeVote.ProviderWins : DisputeVote.BuyerWins;
+        uint256 pVotes =
+            providerWins ? ++providerVoteCount[reservationId][assignmentIndex] : providerVoteCount[reservationId][assignmentIndex];
+        uint256 bVotes =
+            providerWins ? buyerVoteCount[reservationId][assignmentIndex] : ++buyerVoteCount[reservationId][assignmentIndex];
+
+        emit AssignmentDisputeVoteCast(reservationId, assignmentIndex, msg.sender, providerWins, pVotes, bVotes);
+
+        uint256 threshold = pools[r.classId].terms.panelThreshold;
+        if (pVotes >= threshold) {
+            _executeAssignmentDisputeVerdict(reservationId, assignmentIndex, true);
+        } else if (bVotes >= threshold) {
+            _executeAssignmentDisputeVerdict(reservationId, assignmentIndex, false);
+        }
+    }
+
+    function _executeAssignmentDisputeVerdict(uint256 reservationId, uint256 assignmentIndex, bool providerWins)
+        private
+    {
+        Reservation storage r = reservations[reservationId];
+        Assignment storage a = r.assignments[assignmentIndex];
         uint256 amount = a.price + a.collateral;
         if (providerWins) {
             a.status = AssignmentStatus.Settled;
-            emit AssignmentDisputeResolved(reservationId, assignmentIndex, msg.sender, true);
+            emit AssignmentDisputeResolved(reservationId, assignmentIndex, true);
             emit AssignmentSettled(reservationId, assignmentIndex, a.provider);
             _payout(a.provider, amount);
         } else {
             a.status = AssignmentStatus.Refunded;
-            emit AssignmentDisputeResolved(reservationId, assignmentIndex, msg.sender, false);
+            emit AssignmentDisputeResolved(reservationId, assignmentIndex, false);
             emit AssignmentRefunded(reservationId, assignmentIndex, r.buyer);
             _payout(r.buyer, amount);
         }

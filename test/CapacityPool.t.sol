@@ -19,10 +19,10 @@ contract CapacityPoolTest is Test {
     uint64 constant DISPUTE_WINDOW = 2 days;
     bytes32 constant EVIDENCE_HASH = keccak256("incident report #1");
     bytes32 constant REASON_HASH = keccak256("work did not match the incident report");
-    address constant NO_ARBITRATOR = address(0);
 
     CapacityPool.TermsClass terms;
     bytes32 classId;
+    address[] NO_PANEL;
 
     function setUp() public {
         terms = CapacityPool.TermsClass({
@@ -31,7 +31,8 @@ contract CapacityPoolTest is Test {
             validUntil: uint64(block.timestamp + 30 days),
             activationSLA: SLA,
             disputeWindow: DISPUTE_WINDOW,
-            arbitrator: NO_ARBITRATOR,
+            panelMembers: NO_PANEL,
+            panelThreshold: 0,
             pricePerUnit: PRICE_PER_UNIT,
             collateralPerUnit: COLLATERAL_PER_UNIT
         });
@@ -445,17 +446,18 @@ contract CapacityPoolTest is Test {
         assertEq(buyer.balance, buyerBalanceBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
     }
 
-    // --- Level 4: designated-arbitrator dispute resolution ------------------
+    // --- Level 4/5: arbitration panels (single arbitrator is the M=1,N=1 case) ---
 
-    function _throughDisputedAssignmentWithArbitrator(address arbitrator)
+    function _throughDisputedAssignmentWithPanel(address[] memory panelMembers, uint256 threshold)
         internal
         returns (uint256 reservationId)
     {
-        CapacityPool.TermsClass memory arbitratedTerms = terms;
-        arbitratedTerms.arbitrator = arbitrator;
+        CapacityPool.TermsClass memory panelTerms = terms;
+        panelTerms.panelMembers = panelMembers;
+        panelTerms.panelThreshold = threshold;
 
         vm.prank(providerA);
-        bytes32 id = pool.contribute{value: COLLATERAL_PER_UNIT * 4}(arbitratedTerms, 4);
+        bytes32 id = pool.contribute{value: COLLATERAL_PER_UNIT * 4}(panelTerms, 4);
 
         vm.prank(buyer);
         reservationId = pool.reserve{value: PRICE_PER_UNIT * 4}(id, 4);
@@ -469,43 +471,78 @@ contract CapacityPoolTest is Test {
         pool.disputeAssignment(reservationId, 0, REASON_HASH);
     }
 
-    function test_resolveAssignmentDispute_arbitrator_rules_for_provider() public {
+    function test_contribute_rejects_oversized_panel() public {
+        address[] memory tooMany = new address[](pool.MAX_PANEL_SIZE() + 1);
+        for (uint256 i = 0; i < tooMany.length; i++) {
+            tooMany[i] = makeAddr(string.concat("member", vm.toString(i)));
+        }
+        CapacityPool.TermsClass memory badTerms = terms;
+        badTerms.panelMembers = tooMany;
+        badTerms.panelThreshold = 1;
+
+        vm.prank(providerA);
+        vm.expectRevert(CapacityPool.InvalidPanel.selector);
+        pool.contribute{value: COLLATERAL_PER_UNIT * 4}(badTerms, 4);
+    }
+
+    function test_contribute_rejects_threshold_above_panel_size() public {
+        address[] memory panel = new address[](2);
+        panel[0] = makeAddr("m0");
+        panel[1] = makeAddr("m1");
+        CapacityPool.TermsClass memory badTerms = terms;
+        badTerms.panelMembers = panel;
+        badTerms.panelThreshold = 3;
+
+        vm.prank(providerA);
+        vm.expectRevert(CapacityPool.InvalidPanel.selector);
+        pool.contribute{value: COLLATERAL_PER_UNIT * 4}(badTerms, 4);
+    }
+
+    /// @notice A single trusted arbitrator (Level 4) is exactly the
+    /// panelMembers.length == 1, panelThreshold == 1 case. One vote settles it.
+    function test_voteAssignmentDispute_single_member_panel_settles_like_Level4_arbitrator() public {
         address arbitrator = makeAddr("arbitrator");
-        uint256 reservationId = _throughDisputedAssignmentWithArbitrator(arbitrator);
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 reservationId = _throughDisputedAssignmentWithPanel(panel, 1);
 
         uint256 providerBefore = providerA.balance;
         vm.prank(arbitrator);
-        pool.resolveAssignmentDispute(reservationId, 0, true);
+        pool.voteAssignmentDispute(reservationId, 0, true);
 
         assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Settled));
         assertEq(providerA.balance, providerBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
     }
 
-    function test_resolveAssignmentDispute_arbitrator_rules_for_buyer() public {
+    function test_voteAssignmentDispute_rules_for_buyer() public {
         address arbitrator = makeAddr("arbitrator");
-        uint256 reservationId = _throughDisputedAssignmentWithArbitrator(arbitrator);
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 reservationId = _throughDisputedAssignmentWithPanel(panel, 1);
 
         uint256 buyerBefore = buyer.balance;
         vm.prank(arbitrator);
-        pool.resolveAssignmentDispute(reservationId, 0, false);
+        pool.voteAssignmentDispute(reservationId, 0, false);
 
         assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Refunded));
         assertEq(buyer.balance, buyerBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
     }
 
-    function test_resolveAssignmentDispute_by_non_arbitrator_reverts() public {
+    function test_voteAssignmentDispute_by_non_member_reverts() public {
         address arbitrator = makeAddr("arbitrator");
-        uint256 reservationId = _throughDisputedAssignmentWithArbitrator(arbitrator);
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 reservationId = _throughDisputedAssignmentWithPanel(panel, 1);
 
-        vm.prank(buyer); // not the named arbitrator
+        vm.prank(buyer); // not a panel member
         vm.expectRevert(CapacityPool.NotArbitrator.selector);
-        pool.resolveAssignmentDispute(reservationId, 0, true);
+        pool.voteAssignmentDispute(reservationId, 0, true);
     }
 
-    /// @notice A class that opted out of arbitration (arbitrator ==
-    /// address(0), i.e. `terms` as seeded by setUp/_seedThreeProviders) must
-    /// fall back to exact Level 3 behavior.
-    function test_resolveAssignmentDispute_reverts_for_everyone_when_no_arbitrator_named() public {
+    /// @notice A class that opted out of arbitration (empty panel, i.e.
+    /// `terms` as seeded by setUp/_seedThreeProviders) must fall back to
+    /// exact Level 3 behavior.
+    function test_voteAssignmentDispute_reverts_for_everyone_when_panel_is_empty() public {
         _seedThreeProviders();
         uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
         vm.prank(buyer);
@@ -513,12 +550,55 @@ contract CapacityPoolTest is Test {
 
         vm.prank(buyer);
         vm.expectRevert(CapacityPool.NotArbitrator.selector);
-        pool.resolveAssignmentDispute(reservationId, 0, true);
+        pool.voteAssignmentDispute(reservationId, 0, true);
 
         vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
         uint256 buyerBefore = buyer.balance;
         pool.resolveAssignmentDisputeByTimeout(reservationId, 0);
         assertEq(buyer.balance, buyerBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
+    }
+
+    /// @notice The real M-of-N case: a 3-member panel with threshold 2.
+    function test_voteAssignmentDispute_three_member_panel_needs_two_matching_votes() public {
+        address a1 = makeAddr("a1");
+        address a2 = makeAddr("a2");
+        address a3 = makeAddr("a3");
+        address[] memory panel = new address[](3);
+        panel[0] = a1;
+        panel[1] = a2;
+        panel[2] = a3;
+        uint256 reservationId = _throughDisputedAssignmentWithPanel(panel, 2);
+
+        vm.prank(a1);
+        pool.voteAssignmentDispute(reservationId, 0, true); // 1 vote: not enough
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Disputed));
+
+        vm.prank(a2);
+        pool.voteAssignmentDispute(reservationId, 0, false); // split 1-1: still not enough
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Disputed));
+
+        uint256 buyerBefore = buyer.balance;
+        vm.prank(a3);
+        pool.voteAssignmentDispute(reservationId, 0, false); // 2 votes for buyer: threshold reached
+
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Refunded));
+        assertEq(buyer.balance, buyerBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
+    }
+
+    function test_voteAssignmentDispute_member_cannot_vote_twice() public {
+        address arbitrator = makeAddr("arbitrator");
+        address[] memory panel = new address[](3);
+        panel[0] = arbitrator;
+        panel[1] = makeAddr("a2");
+        panel[2] = makeAddr("a3");
+        uint256 reservationId = _throughDisputedAssignmentWithPanel(panel, 2);
+
+        vm.prank(arbitrator);
+        pool.voteAssignmentDispute(reservationId, 0, true);
+
+        vm.prank(arbitrator);
+        vm.expectRevert(CapacityPool.AlreadyVoted.selector);
+        pool.voteAssignmentDispute(reservationId, 0, true);
     }
 
     // --- Transfer and expiration mirror CapacityMarket's semantics ----------

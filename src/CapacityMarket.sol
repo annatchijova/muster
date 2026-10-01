@@ -19,9 +19,9 @@ pragma solidity ^0.8.24;
 ///   4. Collateral and price are each locked once and released exactly
 ///      once: to the provider at `settle`/`finalizeDelivery`, to the buyer
 ///      at `claimDefault` (both amounts — no service, no charge) or
-///      `resolveDisputeByTimeout`, to either party via `resolveDispute`'s
-///      verdict, or split by `expire` depending on whether the position was
-///      ever reserved.
+///      `resolveDisputeByTimeout`, to either party via the arbitration
+///      panel's verdict in `voteDispute`, or split by `expire` depending on
+///      whether the position was ever reserved.
 ///   5. State transitions are one-way. There is no path back to an earlier
 ///      state, so a stale reference to a position's status is never wrong
 ///      about what remains possible from here.
@@ -34,24 +34,27 @@ pragma solidity ^0.8.24;
 /// liveness gap this introduces (an unresponsive buyer could otherwise
 /// lock the provider's price and collateral in `DeliveryClaimed` forever).
 ///
-/// Level 4 addition: a position may name an `arbitrator` at listing time —
-/// visible to the buyer before they ever reserve, the same way `price` and
-/// `activationSLA` are. Once `Disputed`, that specific address (and only
-/// that address) may call `resolveDispute` to rule for the buyer or the
-/// provider, on whatever offchain basis they choose — the contract does not
-/// and cannot evaluate the merits itself. If the arbitrator rules before
-/// `disputeDeadline` passes, their ruling wins; if they never act (or
-/// `arbitrator == address(0)`, meaning the position opted out of
-/// arbitration entirely), `resolveDisputeByTimeout` still fires afterward
-/// exactly as in Level 3 — arbitration is additive, never a new way for
-/// funds to get stuck.
+/// Level 4/5 addition: a position may name an arbitration panel at listing
+/// time — a list of `members` and a `threshold`, visible to the buyer
+/// before they ever reserve, the same way `price` and `activationSLA` are.
+/// Once `Disputed`, any panel member may `voteDispute` for the buyer or the
+/// provider; once either side's vote count reaches `threshold`, that
+/// verdict executes automatically. A single trusted arbitrator (Level 4) is
+/// just the `members.length == 1, threshold == 1` case of this — the panel
+/// mechanism is a strict generalization, not a parallel feature. If the
+/// panel never reaches threshold (or `threshold == 0`, meaning the position
+/// opted out of arbitration entirely), `resolveDisputeByTimeout` still
+/// fires afterward exactly as in Level 3 — arbitration is additive, never a
+/// new way for funds to get stuck.
 ///
-/// What this contract does NOT and cannot guarantee, even with Level 4: that
-/// the named arbitrator is honest, competent, or uninvolved — a single
-/// designated address is a trust assumption the buyer accepts by reserving
-/// a position that names one, not a decentralized or trustless adjudication
-/// mechanism. See docs/TECHNICAL_README.md "Trust boundary" and "Level 4:
-/// designated-arbitrator dispute resolution".
+/// What this contract does NOT and cannot guarantee, even with a panel: that
+/// its members are honest, competent, or mutually independent — M members
+/// are M trust assumptions the buyer accepts by reserving a position that
+/// names them, not a decentralized or trustless adjudication mechanism on
+/// their own (no stake, no slashing for a bad-faith vote, no identity
+/// verification that members aren't the same party under different
+/// addresses). See docs/TECHNICAL_README.md "Trust boundary" and "Level 5:
+/// M-of-N arbitration panels".
 contract CapacityMarket {
     enum Status {
         Listed,
@@ -75,7 +78,6 @@ contract CapacityMarket {
         uint64 disputeWindow;
         address provider;
         address buyer;
-        address arbitrator;
         uint256 price;
         uint256 collateral;
         uint64 activationDeadline;
@@ -84,8 +86,24 @@ contract CapacityMarket {
         Status status;
     }
 
+    enum DisputeVote {
+        None,
+        ProviderWins,
+        BuyerWins
+    }
+
+    struct ArbitrationPanel {
+        address[] members;
+        uint256 threshold;
+    }
+
     uint256 public nextPositionId;
     mapping(uint256 => CapacityPosition) public positions;
+
+    mapping(uint256 => ArbitrationPanel) private panels;
+    mapping(uint256 => mapping(address => DisputeVote)) private disputeVotes;
+    mapping(uint256 => uint256) private providerVoteCount;
+    mapping(uint256 => uint256) private buyerVoteCount;
 
     event Listed(
         uint256 indexed positionId,
@@ -106,13 +124,18 @@ contract CapacityMarket {
     event Disputed(uint256 indexed positionId, bytes32 reasonHash, uint64 resolutionDeadline);
     event Settled(uint256 indexed positionId);
     event Refunded(uint256 indexed positionId);
-    event DisputeResolved(uint256 indexed positionId, address indexed arbitrator, bool providerWon);
+    event DisputeVoteCast(
+        uint256 indexed positionId, address indexed voter, bool providerWins, uint256 providerVotes, uint256 buyerVotes
+    );
+    event DisputeResolved(uint256 indexed positionId, bool providerWon);
     event Expired(uint256 indexed positionId);
     event Defaulted(uint256 indexed positionId);
 
     error NotProvider();
     error NotBuyer();
     error NotArbitrator();
+    error InvalidPanel();
+    error AlreadyVoted();
     error WrongStatus(Status expected, Status actual);
     error WrongValue();
     error WindowNotOpen();
@@ -137,6 +160,16 @@ contract CapacityMarket {
     /// (F2) or destructively (F3).
     uint64 public constant MAX_DURATION = 365 days;
 
+    /// @notice Upper bound on an arbitration panel's member count, enforced
+    /// at `listCapacity`. `voteDispute` scans `panel.members` linearly to
+    /// check membership; without a bound, a provider could list a
+    /// pathologically large panel and make every vote on that position cost
+    /// unbounded gas — the same class of self-inflicted-but-still-worth-
+    /// bounding risk `MAX_DURATION` closes for durations. 9 is generous for
+    /// any realistic panel (a odd panel size is a reasonable default to
+    /// avoid ties, not a requirement this contract enforces).
+    uint256 public constant MAX_PANEL_SIZE = 9;
+
     modifier inStatus(uint256 positionId, Status expected) {
         Status actual = positions[positionId].status;
         if (actual != expected) revert WrongStatus(expected, actual);
@@ -146,9 +179,12 @@ contract CapacityMarket {
     /// @notice Provider lists capacity, posting `collateral` as a bond against
     /// default. `disputeWindow` is how long the buyer has, after the provider
     /// claims delivery, to dispute it before `finalizeDelivery` can pay the
-    /// provider unilaterally. `arbitrator` (may be `address(0)` to opt out
-    /// entirely) is who can rule on a dispute via `resolveDispute` — visible
-    /// to the buyer before they ever reserve, same as every other term here.
+    /// provider unilaterally. `panelMembers`/`panelThreshold` define who can
+    /// vote on a dispute and how many matching votes execute a verdict —
+    /// pass an empty `panelMembers` array and `panelThreshold == 0` to opt
+    /// out of arbitration entirely (a single trusted arbitrator is just
+    /// `panelMembers.length == 1, panelThreshold == 1`). Visible to the
+    /// buyer before they ever reserve, same as every other term here.
     function listCapacity(
         bytes32 domain,
         uint256 quantity,
@@ -156,12 +192,19 @@ contract CapacityMarket {
         uint64 validUntil,
         uint64 activationSLA,
         uint64 disputeWindow,
-        address arbitrator,
+        address[] calldata panelMembers,
+        uint256 panelThreshold,
         uint256 price
     ) external payable returns (uint256 positionId) {
         if (validUntil <= validFrom) revert InvalidWindow();
         if (quantity == 0) revert WrongValue();
         if (activationSLA > MAX_DURATION || disputeWindow > MAX_DURATION) revert DurationTooLong();
+        if (panelMembers.length > MAX_PANEL_SIZE) revert InvalidPanel();
+        if (panelMembers.length == 0) {
+            if (panelThreshold != 0) revert InvalidPanel();
+        } else if (panelThreshold == 0 || panelThreshold > panelMembers.length) {
+            revert InvalidPanel();
+        }
 
         positionId = nextPositionId++;
         positions[positionId] = CapacityPosition({
@@ -173,7 +216,6 @@ contract CapacityMarket {
             disputeWindow: disputeWindow,
             provider: msg.sender,
             buyer: address(0),
-            arbitrator: arbitrator,
             price: price,
             collateral: msg.value,
             activationDeadline: 0,
@@ -181,8 +223,17 @@ contract CapacityMarket {
             deliveryEvidenceHash: bytes32(0),
             status: Status.Listed
         });
+        panels[positionId] = ArbitrationPanel({members: panelMembers, threshold: panelThreshold});
 
         emit Listed(positionId, msg.sender, domain, quantity, validFrom, validUntil, activationSLA, price, msg.value);
+    }
+
+    /// @notice View into a position's arbitration panel — a separate
+    /// function because a dynamic array inside a struct can't be returned by
+    /// `positions`'s auto-generated public getter.
+    function arbitrationPanel(uint256 positionId) external view returns (address[] memory members, uint256 threshold) {
+        ArbitrationPanel storage panel = panels[positionId];
+        return (panel.members, panel.threshold);
     }
 
     /// @notice Buyer reserves a listed position, paying exactly `price`.
@@ -327,31 +378,54 @@ contract CapacityMarket {
         _payout(p.buyer, p.price + p.collateral);
     }
 
-    /// @notice The position's named arbitrator rules on a dispute, on
-    /// whatever offchain basis they choose — this contract records the
-    /// verdict and pays it out; it does not and cannot evaluate the
-    /// dispute's merits itself. No deadline on this side deliberately: the
-    /// arbitrator may rule at any point while `Disputed`, racing against
-    /// `resolveDisputeByTimeout`'s permissionless fallback the same way
-    /// `acceptActivation` races `claimDefault` elsewhere in this contract —
-    /// whichever call lands first wins, enforced by the same `inStatus`
-    /// guard, not by an explicit priority rule. Reverts for every caller,
-    /// unconditionally, if the position was listed with `arbitrator ==
-    /// address(0)` (opted out of arbitration) — no real transaction can
-    /// ever originate from the zero address.
-    function resolveDispute(uint256 positionId, bool providerWins) external inStatus(positionId, Status.Disputed) {
-        CapacityPosition storage p = positions[positionId];
-        if (msg.sender != p.arbitrator) revert NotArbitrator();
+    /// @notice A member of the position's arbitration panel casts one vote,
+    /// on whatever offchain basis they choose — this contract records the
+    /// vote and, once either side reaches `threshold`, pays out the verdict;
+    /// it does not and cannot evaluate the dispute's merits itself. No
+    /// deadline on voting deliberately: the panel may act at any point while
+    /// `Disputed`, racing `resolveDisputeByTimeout`'s permissionless
+    /// fallback the same way `acceptActivation` races `claimDefault`
+    /// elsewhere in this contract — whichever happens first wins, enforced
+    /// by the same `inStatus` guard, not an explicit priority rule. Reverts
+    /// for every caller, unconditionally, if the position was listed with an
+    /// empty panel (opted out of arbitration): an empty `members` array has
+    /// no possible member for `msg.sender` to match.
+    function voteDispute(uint256 positionId, bool providerWins) external inStatus(positionId, Status.Disputed) {
+        ArbitrationPanel storage panel = panels[positionId];
+        bool isMember = false;
+        for (uint256 i = 0; i < panel.members.length; i++) {
+            if (panel.members[i] == msg.sender) {
+                isMember = true;
+                break;
+            }
+        }
+        if (!isMember) revert NotArbitrator();
+        if (disputeVotes[positionId][msg.sender] != DisputeVote.None) revert AlreadyVoted();
 
+        disputeVotes[positionId][msg.sender] = providerWins ? DisputeVote.ProviderWins : DisputeVote.BuyerWins;
+        uint256 pVotes = providerWins ? ++providerVoteCount[positionId] : providerVoteCount[positionId];
+        uint256 bVotes = providerWins ? buyerVoteCount[positionId] : ++buyerVoteCount[positionId];
+
+        emit DisputeVoteCast(positionId, msg.sender, providerWins, pVotes, bVotes);
+
+        if (pVotes >= panel.threshold) {
+            _executeDisputeVerdict(positionId, true);
+        } else if (bVotes >= panel.threshold) {
+            _executeDisputeVerdict(positionId, false);
+        }
+    }
+
+    function _executeDisputeVerdict(uint256 positionId, bool providerWins) private {
+        CapacityPosition storage p = positions[positionId];
         uint256 amount = p.price + p.collateral;
         if (providerWins) {
             p.status = Status.Settled;
-            emit DisputeResolved(positionId, msg.sender, true);
+            emit DisputeResolved(positionId, true);
             emit Settled(positionId);
             _payout(p.provider, amount);
         } else {
             p.status = Status.Refunded;
-            emit DisputeResolved(positionId, msg.sender, false);
+            emit DisputeResolved(positionId, false);
             emit Refunded(positionId);
             _payout(p.buyer, amount);
         }

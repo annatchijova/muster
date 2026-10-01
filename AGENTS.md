@@ -56,21 +56,29 @@ level to rebuild or bypass it.
   it makes delivery an explicit two-sided claim with no fund-lock path
   (invariant 8 below), but a dispute's default resolution (refund the
   buyer) is a declared conservative rule, not adjudication on the merits.
-- **Level 4 (current):** a designated `arbitrator` (set per-position in
-  `CapacityMarket`, per-class in `CapacityPool.TermsClass`) can rule on a
-  `Disputed` claim via `resolveDispute`/`resolveAssignmentDispute`, no
-  deadline of its own, racing `resolveDisputeByTimeout`'s permissionless
-  fallback (whichever lands first wins — same pattern as `acceptActivation`
-  vs. `claimDefault`). `arbitrator == address(0)` opts a position/class out
-  entirely, reproducing exact Level 3 behavior. Still a trust assumption,
-  not decentralized adjudication: the contract cannot verify the named
-  arbitrator's independence, and does not try to — see the Technical
-  README's "Level 4" section for why a `require(arbitrator != provider)`
-  check was deliberately not added (trivially bypassed, false safety).
-- **Level 5 (planned):** staked jurors, an appeals path, or an oracle
-  reading the offchain evidence behind `evidenceHash`/`reasonHash`
-  independently — genuinely trust-minimized adjudication, as opposed to
-  Level 4's single trusted address.
+- **Level 4/5 (current):** an arbitration panel (`panelMembers` +
+  `panelThreshold`, set per-position in `CapacityMarket`, per-class in
+  `CapacityPool.TermsClass`) can rule on a `Disputed` claim via
+  `voteDispute`/`voteAssignmentDispute`; once either side's votes reach
+  `panelThreshold`, the verdict executes. No deadline of its own, racing
+  `resolveDisputeByTimeout`'s permissionless fallback (whichever lands
+  first wins — same pattern as `acceptActivation` vs. `claimDefault`). An
+  empty panel opts a position/class out entirely, reproducing exact Level 3
+  behavior. A single trusted arbitrator (what was originally shipped as
+  "Level 4") is not a separate code path — it's the `panelMembers.length ==
+  1, panelThreshold == 1` case of this mechanism; Level 5 replaced the
+  dedicated `arbitrator` field and `resolveDispute` function with the
+  general panel rather than keeping both. Still a trust assumption, not
+  decentralized adjudication: the contract cannot verify panel members'
+  independence, and does not try to — see the Technical README's "Level
+  4/5" section for why a `require(member != provider)` check was
+  deliberately not added (trivially bypassed, false safety), and why
+  `MAX_PANEL_SIZE = 9` bounds the membership-check loop in `voteDispute`.
+- **Level 6 (planned):** staked jurors with slashing, an appeals path, or
+  an oracle reading the offchain evidence behind `evidenceHash`/
+  `reasonHash` independently — genuinely trust-minimized adjudication, as
+  opposed to Level 5's M trusted addresses with no economic weight behind
+  a vote.
 
 Before adding a level, re-read the "Invariants" and "Trust boundary"
 sections of the Technical README and confirm the new level preserves every
@@ -114,19 +122,20 @@ the fungibility-specific one named in this project's own design notes:
    sibling assignment in the same reservation — partial fulfillment and
    partial disagreement are both first-class outcomes.
 
-**Known, accepted gap, not an oversight, even after Level 4:**
-`resolveDispute`/`resolveAssignmentDispute` let a named arbitrator rule, but
-the contract has no way to verify that arbitrator is independent, honest,
-or even paying attention — a provider can name themselves or a colluding
-address, and nothing stops it (see the Technical README's "Level 4" for why
-no code-level check was added for this). `resolveDisputeByTimeout` is still
-the only resolution path when no arbitrator is named, and still just a
-conservative default, not a verdict. Real trust-minimization (staking,
-slashing, an appeals path, an independent oracle) is Level 5's job, not a
-bug to "fix" in Level 4 by adding an `arbitrator != provider` check that
-would only create the appearance of safety — that's exactly the kind of
-approximated-depth shortcut this project's construction method rejects.
-Build Level 5 properly or leave the gap documented.
+**Known, accepted gap, not an oversight, even after Level 5:**
+`voteDispute`/`voteAssignmentDispute` let a panel rule, but the contract has
+no way to verify that panel's members are independent, honest, or even
+paying attention — a provider can name themselves or M colluding addresses,
+and nothing stops it (see the Technical README's "Level 4/5" for why no
+code-level check was added for this). `resolveDisputeByTimeout` is still the
+only resolution path when no panel is named, and still just a conservative
+default, not a verdict. A vote also carries no economic weight — no stake,
+no slashing for a provably bad-faith ruling. Real trust-minimization
+(staking, slashing, an appeals path, an independent oracle) is Level 6's
+job, not a bug to "fix" in Level 5 by adding a `member != provider` check
+that would only create the appearance of safety — that's exactly the kind
+of approximated-depth shortcut this project's construction method rejects.
+Build Level 6 properly or leave the gap documented.
 
 **Push-payment is a known liveness gap, not a security hole,** in both
 contracts. `_payout` uses `.call` and requires success; a recipient whose
@@ -180,13 +189,21 @@ memory of the rule, is what has to be repeated, including periodically
 against code nobody is currently touching, not only against new code. **It
 held on the
 fourth attempt:** adding Level 4's `resolveDispute`/
-`resolveAssignmentDispute` reused the exact `Settled`/`Refunded` terminal
-states and `price + collateral` amounts Level 3 already paid out correctly,
-rather than inventing a new terminal state or a new payout amount — the
-checklist item was applied deliberately before considering the level done,
-and nothing new to check against invariant 8 was introduced. Evidence a
-rule written down after a mistake can actually prevent the next one, if the
-checklist is run, not just remembered.
+`resolveAssignmentDispute` (since generalized into `voteDispute`/
+`voteAssignmentDispute` at Level 5 — the function names changed, the point
+doesn't) reused the exact `Settled`/`Refunded` terminal states and
+`price + collateral` amounts Level 3 already paid out correctly, rather
+than inventing a new terminal state or a new payout amount — the checklist
+item was applied deliberately before considering the level done, and
+nothing new to check against invariant 8 was introduced. Evidence a rule
+written down after a mistake can actually prevent the next one, if the
+checklist is run, not just remembered. **It held on the fifth attempt too:**
+Level 5's `voteDispute`/`voteAssignmentDispute` pay out through the exact
+same `_executeDisputeVerdict`/`_executeAssignmentDisputeVerdict` internal
+functions Level 4 used, generalized to run once a vote tally crosses
+`panelThreshold` instead of on a single arbitrator's call — no new terminal
+state, no new payout amount, same checklist applied before calling the
+level done.
 
 Same red-team pass also found and fixed an unrelated root cause: neither
 `activationSLA` nor `disputeWindow` had an upper bound, and both feed a
@@ -249,12 +266,18 @@ itself is.
   at exactly that value — raising it is safe as long as the new value still
   leaves enormous headroom under the uint64 overflow horizon; do not remove
   the check entirely.
-- `arbitrator` (Level 4) defaults to `address(0)` (no arbitration) unless a
-  provider/first-contributor sets otherwise — opt-in, not opt-out.
-  Deliberately no `require(arbitrator != provider)` or similar: trivially
-  bypassed with a second address, so it would be a fake safeguard. Do not
-  add one under the theory that it "can't hurt" — it can, by implying a
-  guarantee the contract doesn't provide.
+- An arbitration panel (Level 5) defaults to empty (no arbitration) unless
+  a provider/first-contributor sets `panelMembers`/`panelThreshold`
+  otherwise — opt-in, not opt-out. Deliberately no `require(member !=
+  provider)` or similar: trivially bypassed with a second address, so it
+  would be a fake safeguard. Do not add one under the theory that it "can't
+  hurt" — it can, by implying a guarantee the contract doesn't provide.
+- `MAX_PANEL_SIZE = 9` (both contracts, public constant) bounds a panel's
+  member count, enforced at `listCapacity`/`contribute`. Exists because
+  `voteDispute`/`voteAssignmentDispute` scan the panel linearly for
+  membership — same reasoning as `MAX_DURATION`, applied to a loop bound
+  instead of an arithmetic overflow bound. Not load-bearing at exactly 9;
+  raising it is safe as long as the membership-check loop stays cheap.
 
 ## Build & test
 
@@ -264,9 +287,9 @@ forge test
 ```
 
 A green `forge test` run proves the invariants listed above hold under the
-scenarios in `test/CapacityMarket.t.sol` (36 tests), `test/CapacityPool.t.sol`
-(38 tests), and `test/RedTeam.t.sol` (6 tests — the regression suite for
-`docs/SECURITY_AUDIT_2026-10-01.md`'s three fixed findings) — 80 total. It
+scenarios in `test/CapacityMarket.t.sol` (43 tests), `test/CapacityPool.t.sol`
+(42 tests), and `test/RedTeam.t.sol` (6 tests — the regression suite for
+`docs/SECURITY_AUDIT_2026-10-01.md`'s three fixed findings) — 91 total. It
 is not an independent security audit beyond this project's own red-team
 pass, and does not cover fuzzing, formal verification, or interaction
 between the two contracts (they don't currently call each other, but a
