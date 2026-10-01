@@ -30,6 +30,14 @@ pragma solidity ^0.8.24;
 /// enforced by `reserve()` checking `available` before decrementing it, and
 /// proven never to be violated by `activate()`'s FIFO walk — see
 /// docs/TECHNICAL_README.md "Why activate() cannot run out of capacity".
+///
+/// Level 4 addition, mirroring `CapacityMarket`: a `TermsClass` may name an
+/// `arbitrator` (shared by every assignment drawn from that class, like
+/// `activationSLA`/`disputeWindow`; `address(0)` opts the whole class out).
+/// Once an assignment is `Disputed`, that address may call
+/// `resolveAssignmentDispute` to rule for the buyer or the provider.
+/// `resolveAssignmentDisputeByTimeout` still fires if they never act — see
+/// `CapacityMarket.resolveDispute`'s NatSpec for the full reasoning.
 contract CapacityPool {
     enum AssignmentStatus {
         Pending,
@@ -53,6 +61,7 @@ contract CapacityPool {
         uint64 validUntil;
         uint64 activationSLA;
         uint64 disputeWindow;
+        address arbitrator;
         uint256 pricePerUnit;
         uint256 collateralPerUnit;
     }
@@ -109,6 +118,9 @@ contract CapacityPool {
     event AssignmentDefaulted(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed provider);
     event AssignmentSettled(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed provider);
     event AssignmentRefunded(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed buyer);
+    event AssignmentDisputeResolved(
+        uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed arbitrator, bool providerWon
+    );
     event ContributionWithdrawn(bytes32 indexed classId, uint256 indexed index, address indexed provider, uint256 amount);
 
     error InvalidWindow();
@@ -116,6 +128,7 @@ contract CapacityPool {
     error InsufficientAvailableCapacity();
     error NotBuyer();
     error NotProvider();
+    error NotArbitrator();
     error WrongReservationStatus(ReservationStatus expected, ReservationStatus actual);
     error WrongAssignmentStatus(AssignmentStatus expected, AssignmentStatus actual);
     error WindowNotOpen();
@@ -411,6 +424,35 @@ contract CapacityPool {
         emit AssignmentRefunded(reservationId, assignmentIndex, r.buyer);
 
         _payout(r.buyer, a.price + a.collateral);
+    }
+
+    /// @notice The class's named arbitrator rules on one assignment's
+    /// dispute. Mirrors `CapacityMarket.resolveDispute` exactly — same
+    /// no-deadline race against `resolveAssignmentDisputeByTimeout`, same
+    /// unconditional revert if the class opted out (`arbitrator ==
+    /// address(0)`). Scoped to one assignment: ruling on one provider's
+    /// disputed slice has no effect on a sibling assignment's dispute.
+    function resolveAssignmentDispute(uint256 reservationId, uint256 assignmentIndex, bool providerWins)
+        external
+        reservationInStatus(reservationId, ReservationStatus.Activated)
+    {
+        Reservation storage r = reservations[reservationId];
+        Assignment storage a = r.assignments[assignmentIndex];
+        if (a.status != AssignmentStatus.Disputed) revert WrongAssignmentStatus(AssignmentStatus.Disputed, a.status);
+        if (msg.sender != pools[r.classId].terms.arbitrator) revert NotArbitrator();
+
+        uint256 amount = a.price + a.collateral;
+        if (providerWins) {
+            a.status = AssignmentStatus.Settled;
+            emit AssignmentDisputeResolved(reservationId, assignmentIndex, msg.sender, true);
+            emit AssignmentSettled(reservationId, assignmentIndex, a.provider);
+            _payout(a.provider, amount);
+        } else {
+            a.status = AssignmentStatus.Refunded;
+            emit AssignmentDisputeResolved(reservationId, assignmentIndex, msg.sender, false);
+            emit AssignmentRefunded(reservationId, assignmentIndex, r.buyer);
+            _payout(r.buyer, amount);
+        }
     }
 
     /// @notice Buyer confirms delivery of one claimed assignment, releasing

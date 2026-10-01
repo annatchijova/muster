@@ -105,18 +105,27 @@ position.
 `settle` is no longer a bare approval — it follows a hash-committed delivery
 claim and a bounded response window, with a timeout path on each side so
 neither a silent buyer nor an unresolved dispute can lock funds forever.
-What it still doesn't do: decide who's actually right in a dispute — that's
-real arbitration, explicitly out of scope for now and named as the next
-level in the Technical README.
+
+**Level 4**: a position can name an `arbitrator` — visible before anyone
+reserves, like every other term. Once a dispute is raised, that address can
+rule for either side, any time, racing the timeout fallback above (whoever
+acts first wins). No arbitrator named (`address(0)`, the default) means
+the position behaves exactly as it did at Level 3. What this still doesn't
+do: guarantee the arbitrator is independent or honest — that's a trust
+assumption the buyer accepts by reserving a position that names one, not
+something a contract can verify. Genuinely trust-minimized adjudication
+(staking, an appeals path) is the next level, named in the Technical
+README.
 
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`).
-- 71/71 tests passing (`test/`), covering all three levels' lifecycles,
+- 80/80 tests passing (`test/`), covering all four levels' lifecycles,
   every invariant violation, and a permanent regression suite for the
   red-team findings below.
-- Live on Monad testnet with the **patched** bytecode (see "Live on Monad
-  testnet" below) and exercised end-to-end for real — not just tested
-  locally.
+- Live on Monad testnet with the **patched, pre-Level-4** bytecode (see
+  "Live on Monad testnet" below) — Level 4 added `arbitrator` to both
+  contracts' public state, changing the ABI, so the deployed addresses
+  predate it until redeployed.
 
 ```bash
 forge build

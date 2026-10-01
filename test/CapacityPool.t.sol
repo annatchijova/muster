@@ -19,6 +19,7 @@ contract CapacityPoolTest is Test {
     uint64 constant DISPUTE_WINDOW = 2 days;
     bytes32 constant EVIDENCE_HASH = keccak256("incident report #1");
     bytes32 constant REASON_HASH = keccak256("work did not match the incident report");
+    address constant NO_ARBITRATOR = address(0);
 
     CapacityPool.TermsClass terms;
     bytes32 classId;
@@ -30,6 +31,7 @@ contract CapacityPoolTest is Test {
             validUntil: uint64(block.timestamp + 30 days),
             activationSLA: SLA,
             disputeWindow: DISPUTE_WINDOW,
+            arbitrator: NO_ARBITRATOR,
             pricePerUnit: PRICE_PER_UNIT,
             collateralPerUnit: COLLATERAL_PER_UNIT
         });
@@ -441,6 +443,82 @@ contract CapacityPoolTest is Test {
 
         assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Refunded));
         assertEq(buyer.balance, buyerBalanceBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
+    }
+
+    // --- Level 4: designated-arbitrator dispute resolution ------------------
+
+    function _throughDisputedAssignmentWithArbitrator(address arbitrator)
+        internal
+        returns (uint256 reservationId)
+    {
+        CapacityPool.TermsClass memory arbitratedTerms = terms;
+        arbitratedTerms.arbitrator = arbitrator;
+
+        vm.prank(providerA);
+        bytes32 id = pool.contribute{value: COLLATERAL_PER_UNIT * 4}(arbitratedTerms, 4);
+
+        vm.prank(buyer);
+        reservationId = pool.reserve{value: PRICE_PER_UNIT * 4}(id, 4);
+        vm.prank(buyer);
+        pool.activate(reservationId);
+        vm.prank(providerA);
+        pool.acceptAssignment(reservationId, 0);
+        vm.prank(providerA);
+        pool.claimAssignmentDelivery(reservationId, 0, EVIDENCE_HASH);
+        vm.prank(buyer);
+        pool.disputeAssignment(reservationId, 0, REASON_HASH);
+    }
+
+    function test_resolveAssignmentDispute_arbitrator_rules_for_provider() public {
+        address arbitrator = makeAddr("arbitrator");
+        uint256 reservationId = _throughDisputedAssignmentWithArbitrator(arbitrator);
+
+        uint256 providerBefore = providerA.balance;
+        vm.prank(arbitrator);
+        pool.resolveAssignmentDispute(reservationId, 0, true);
+
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Settled));
+        assertEq(providerA.balance, providerBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
+    }
+
+    function test_resolveAssignmentDispute_arbitrator_rules_for_buyer() public {
+        address arbitrator = makeAddr("arbitrator");
+        uint256 reservationId = _throughDisputedAssignmentWithArbitrator(arbitrator);
+
+        uint256 buyerBefore = buyer.balance;
+        vm.prank(arbitrator);
+        pool.resolveAssignmentDispute(reservationId, 0, false);
+
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Refunded));
+        assertEq(buyer.balance, buyerBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
+    }
+
+    function test_resolveAssignmentDispute_by_non_arbitrator_reverts() public {
+        address arbitrator = makeAddr("arbitrator");
+        uint256 reservationId = _throughDisputedAssignmentWithArbitrator(arbitrator);
+
+        vm.prank(buyer); // not the named arbitrator
+        vm.expectRevert(CapacityPool.NotArbitrator.selector);
+        pool.resolveAssignmentDispute(reservationId, 0, true);
+    }
+
+    /// @notice A class that opted out of arbitration (arbitrator ==
+    /// address(0), i.e. `terms` as seeded by setUp/_seedThreeProviders) must
+    /// fall back to exact Level 3 behavior.
+    function test_resolveAssignmentDispute_reverts_for_everyone_when_no_arbitrator_named() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+        vm.prank(buyer);
+        pool.disputeAssignment(reservationId, 0, REASON_HASH);
+
+        vm.prank(buyer);
+        vm.expectRevert(CapacityPool.NotArbitrator.selector);
+        pool.resolveAssignmentDispute(reservationId, 0, true);
+
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+        uint256 buyerBefore = buyer.balance;
+        pool.resolveAssignmentDisputeByTimeout(reservationId, 0);
+        assertEq(buyer.balance, buyerBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
     }
 
     // --- Transfer and expiration mirror CapacityMarket's semantics ----------

@@ -19,8 +19,9 @@ pragma solidity ^0.8.24;
 ///   4. Collateral and price are each locked once and released exactly
 ///      once: to the provider at `settle`/`finalizeDelivery`, to the buyer
 ///      at `claimDefault` (both amounts — no service, no charge) or
-///      `resolveDisputeByTimeout`, or split by `expire` depending on
-///      whether the position was ever reserved.
+///      `resolveDisputeByTimeout`, to either party via `resolveDispute`'s
+///      verdict, or split by `expire` depending on whether the position was
+///      ever reserved.
 ///   5. State transitions are one-way. There is no path back to an earlier
 ///      state, so a stale reference to a position's status is never wrong
 ///      about what remains possible from here.
@@ -33,16 +34,24 @@ pragma solidity ^0.8.24;
 /// liveness gap this introduces (an unresponsive buyer could otherwise
 /// lock the provider's price and collateral in `DeliveryClaimed` forever).
 ///
-/// What this contract does NOT and cannot guarantee, even with Level 3:
-/// that the evidence hash corresponds to work that actually met the
-/// buyer's bar, or how a genuine dispute gets resolved on its merits once
-/// raised — `dispute` only records that one was raised. What it does
-/// guarantee is that a dispute cannot lock funds forever: absent an actual
-/// resolution mechanism (not built at this level), `resolveDisputeByTimeout`
-/// refunds the buyer after a second window passes, so `Disputed` always has
-/// a payout path even though it has no adjudication. See
-/// docs/TECHNICAL_README.md "Trust boundary" and "Level 3: delivery claims
-/// and disputes".
+/// Level 4 addition: a position may name an `arbitrator` at listing time —
+/// visible to the buyer before they ever reserve, the same way `price` and
+/// `activationSLA` are. Once `Disputed`, that specific address (and only
+/// that address) may call `resolveDispute` to rule for the buyer or the
+/// provider, on whatever offchain basis they choose — the contract does not
+/// and cannot evaluate the merits itself. If the arbitrator rules before
+/// `disputeDeadline` passes, their ruling wins; if they never act (or
+/// `arbitrator == address(0)`, meaning the position opted out of
+/// arbitration entirely), `resolveDisputeByTimeout` still fires afterward
+/// exactly as in Level 3 — arbitration is additive, never a new way for
+/// funds to get stuck.
+///
+/// What this contract does NOT and cannot guarantee, even with Level 4: that
+/// the named arbitrator is honest, competent, or uninvolved — a single
+/// designated address is a trust assumption the buyer accepts by reserving
+/// a position that names one, not a decentralized or trustless adjudication
+/// mechanism. See docs/TECHNICAL_README.md "Trust boundary" and "Level 4:
+/// designated-arbitrator dispute resolution".
 contract CapacityMarket {
     enum Status {
         Listed,
@@ -66,6 +75,7 @@ contract CapacityMarket {
         uint64 disputeWindow;
         address provider;
         address buyer;
+        address arbitrator;
         uint256 price;
         uint256 collateral;
         uint64 activationDeadline;
@@ -96,11 +106,13 @@ contract CapacityMarket {
     event Disputed(uint256 indexed positionId, bytes32 reasonHash, uint64 resolutionDeadline);
     event Settled(uint256 indexed positionId);
     event Refunded(uint256 indexed positionId);
+    event DisputeResolved(uint256 indexed positionId, address indexed arbitrator, bool providerWon);
     event Expired(uint256 indexed positionId);
     event Defaulted(uint256 indexed positionId);
 
     error NotProvider();
     error NotBuyer();
+    error NotArbitrator();
     error WrongStatus(Status expected, Status actual);
     error WrongValue();
     error WindowNotOpen();
@@ -134,7 +146,9 @@ contract CapacityMarket {
     /// @notice Provider lists capacity, posting `collateral` as a bond against
     /// default. `disputeWindow` is how long the buyer has, after the provider
     /// claims delivery, to dispute it before `finalizeDelivery` can pay the
-    /// provider unilaterally.
+    /// provider unilaterally. `arbitrator` (may be `address(0)` to opt out
+    /// entirely) is who can rule on a dispute via `resolveDispute` — visible
+    /// to the buyer before they ever reserve, same as every other term here.
     function listCapacity(
         bytes32 domain,
         uint256 quantity,
@@ -142,6 +156,7 @@ contract CapacityMarket {
         uint64 validUntil,
         uint64 activationSLA,
         uint64 disputeWindow,
+        address arbitrator,
         uint256 price
     ) external payable returns (uint256 positionId) {
         if (validUntil <= validFrom) revert InvalidWindow();
@@ -158,6 +173,7 @@ contract CapacityMarket {
             disputeWindow: disputeWindow,
             provider: msg.sender,
             buyer: address(0),
+            arbitrator: arbitrator,
             price: price,
             collateral: msg.value,
             activationDeadline: 0,
@@ -309,6 +325,36 @@ contract CapacityMarket {
         emit Refunded(positionId);
 
         _payout(p.buyer, p.price + p.collateral);
+    }
+
+    /// @notice The position's named arbitrator rules on a dispute, on
+    /// whatever offchain basis they choose — this contract records the
+    /// verdict and pays it out; it does not and cannot evaluate the
+    /// dispute's merits itself. No deadline on this side deliberately: the
+    /// arbitrator may rule at any point while `Disputed`, racing against
+    /// `resolveDisputeByTimeout`'s permissionless fallback the same way
+    /// `acceptActivation` races `claimDefault` elsewhere in this contract —
+    /// whichever call lands first wins, enforced by the same `inStatus`
+    /// guard, not by an explicit priority rule. Reverts for every caller,
+    /// unconditionally, if the position was listed with `arbitrator ==
+    /// address(0)` (opted out of arbitration) — no real transaction can
+    /// ever originate from the zero address.
+    function resolveDispute(uint256 positionId, bool providerWins) external inStatus(positionId, Status.Disputed) {
+        CapacityPosition storage p = positions[positionId];
+        if (msg.sender != p.arbitrator) revert NotArbitrator();
+
+        uint256 amount = p.price + p.collateral;
+        if (providerWins) {
+            p.status = Status.Settled;
+            emit DisputeResolved(positionId, msg.sender, true);
+            emit Settled(positionId);
+            _payout(p.provider, amount);
+        } else {
+            p.status = Status.Refunded;
+            emit DisputeResolved(positionId, msg.sender, false);
+            emit Refunded(positionId);
+            _payout(p.buyer, amount);
+        }
     }
 
     /// @notice Buyer confirms delivery before disputing it (or before the

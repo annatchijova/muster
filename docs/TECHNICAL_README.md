@@ -9,24 +9,27 @@ for that.
 Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 
 - **Level 1 — `CapacityMarket.sol`**: single-provider capacity position, full
-  lifecycle plus Level 3's delivery-claim/dispute flow. 31/31 tests passing.
+  lifecycle plus Level 3's delivery-claim/dispute flow and Level 4's
+  designated-arbitrator resolution. 36/36 tests passing.
 - **Level 2 — `CapacityPool.sol`**: fungible, multi-provider capacity pooled
-  by domain class, routed FIFO at activation, same Level 3 flow at the
-  per-assignment grain. 34/34 tests passing.
+  by domain class, routed FIFO at activation, same Level 3/4 flow at the
+  per-assignment grain. 38/38 tests passing.
 
-71/71 tests passing total (including `test/RedTeam.t.sol`'s 6-test
+80/80 tests passing total (including `test/RedTeam.t.sol`'s 6-test
 regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three confirmed
 and fixed findings). A first deploy went to Monad testnet (chain id 10143)
 on 2026-10-01; a same-day red-team pass found and fixed three
 vulnerabilities in the source *after* that deploy, so it was redeployed the
-same day. Current, patched contracts: `CapacityMarket` at
-`0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f`, `CapacityPool` at
-`0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F` — see `README.md`'s "Live on
-Monad testnet" for the end-to-end transactions exercised against them. The
-original addresses (`0xb859aF02…`, `0x555C4340…`) still run the vulnerable
-bytecode and are kept live and verified as part of the audit trail, not for
-reuse. Not independently audited beyond this project's own red-team pass.
-Not deployed to mainnet.
+same day. Patched contracts (pre-Level-4), exercised end-to-end live:
+`CapacityMarket` at `0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f`,
+`CapacityPool` at `0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F` — see
+`README.md`'s "Live on Monad testnet" for the transactions. **Level 4 has
+not been deployed yet** — `arbitrator` is a new field on both
+`CapacityPosition` and `TermsClass`, so it changes the ABI; the two
+addresses above predate it. The original pre-audit addresses (`0xb859aF02…`,
+`0x555C4340…`) still run the vulnerable bytecode and are kept live and
+verified as part of the audit trail, not for reuse. Not independently
+audited beyond this project's own red-team pass. Not deployed to mainnet.
 
 **What "deployed" means here, now that it's been exercised:** the current
 contracts were run end-to-end on the live testnet — `listCapacity` →
@@ -214,6 +217,50 @@ mechanism (Level 4) before `resolveDisputeByTimeout`'s window would ever
 need to fire in practice. Tests: `test_resolveDisputeByTimeout_before_window_reverts`,
 `test_resolveDisputeByTimeout_refunds_buyer_after_window`.
 
+### Level 4: designated-arbitrator dispute resolution
+
+A position may name an `arbitrator` at `listCapacity` time — a public field,
+visible to a buyer before they ever reserve, the same as `price` or
+`activationSLA`. Once a position is `Disputed`, that exact address (and only
+that address) may call `resolveDispute(positionId, providerWins)` to rule
+the claim one way or the other, on whatever offchain basis they choose:
+`providerWins == true` pays `price + collateral` to the provider (same
+amount `settle`/`finalizeDelivery` would have paid); `false` refunds the
+buyer (same amount `resolveDisputeByTimeout` would have paid). The contract
+never evaluates the dispute itself — it only records and pays out whichever
+verdict the named arbitrator returns.
+
+**No priority window for the arbitrator — it's a race, by design.**
+`resolveDispute` has no deadline of its own; it is only gated by the
+position still being `Disputed`. `resolveDisputeByTimeout` is similarly
+gated, after its own window. Whichever call lands first wins, enforced by
+the ordinary `inStatus` guard — not a special priority rule. This is the
+same pattern `acceptActivation` vs. `claimDefault` and `settle` vs.
+`finalizeDelivery` already use elsewhere in this contract: a privileged,
+no-deadline path racing a permissionless, deadline-gated fallback. Test:
+`test_resolveDispute_races_resolveDisputeByTimeout_arbitrator_first_wins`.
+
+**Opting out is free and total.** `arbitrator == address(0)` (the default
+unless a provider sets otherwise) makes `resolveDispute` revert
+`NotArbitrator()` for every possible caller, unconditionally — no real
+transaction can originate from the zero address — so a position with no
+named arbitrator behaves exactly as it did at Level 3. Test:
+`test_resolveDispute_reverts_for_everyone_when_no_arbitrator_named`.
+
+**What this does NOT solve, by design, not oversight:** the contract cannot
+verify an arbitrator's independence. A provider can name themselves, or a
+colluding address, as their own position's arbitrator, and nothing in the
+contract stops it. No code-level restriction (e.g. `require(arbitrator !=
+provider)`) was added, deliberately: it would be trivially defeated by
+naming a second, nominally-unrelated address instead, so it would create
+the appearance of a safeguard without providing one. `arbitrator` is, like
+`activationSLA`, `disputeWindow`, and `collateral`, a term the buyer can and
+should check before reserving — a self-dealing arbitrator is visible
+on-chain before any commitment is made, the same way a zero-day dispute
+window is. See "Discarded (non-exploitable) vectors" in
+`docs/SECURITY_AUDIT_2026-10-01.md` for the identical reasoning applied to
+`disputeWindow = 0`.
+
 ---
 
 ## Level 2 — `CapacityPool.sol`: fungible multi-provider pool
@@ -244,6 +291,7 @@ struct TermsClass {
     uint64 validUntil;
     uint64 activationSLA;
     uint64 disputeWindow;
+    address arbitrator;
     uint256 pricePerUnit;
     uint256 collateralPerUnit;
 }
@@ -280,10 +328,12 @@ reserve(classId, qty) ──▶ Reservation{Reserved}         [available -= qty]
               │        │ [buyer, any time]  │ [within disputeWindow]
               │        ▼                    ▼
               │   Settled              Disputed
-              │   (price+collateral        │  resolveAssignmentDisputeByTimeout()
-              │    → provider)             │  [after a second disputeWindow]
-              │                            ▼
-              │                       Refunded (price+collateral → buyer)
+              │   (price+collateral      │    │  resolveAssignmentDisputeByTimeout()
+              │    → provider)           │    │  [anyone, after a second disputeWindow]
+              │        resolveAssignmentDispute()  ──▶ Refunded (price+collateral → buyer)
+              │        [class's named arbitrator, any time while Disputed]
+              │              ├─ providerWins=true  ──▶ Settled (price+collateral → provider)
+              │              └─ providerWins=false ──▶ Refunded (price+collateral → buyer)
               │
               │   finalizeAssignmentDelivery() [anyone, after disputeDeadline,
               │     if buyer never settled/disputed] ──▶ Settled
@@ -294,6 +344,14 @@ reserve(classId, qty) ──▶ Reservation{Reserved}         [available -= qty]
 withdrawContribution()  [window closed, any time] ──▶ pays collateral for
                           a contribution's unassigned `remaining`, to its provider
 ```
+
+`resolveAssignmentDispute` mirrors `CapacityMarket.resolveDispute` exactly —
+same no-deadline race against the timeout fallback, same unconditional
+revert when the class opted out (`arbitrator == address(0)`), same
+"visible term, not a verifiable-independence guarantee" caveat. See "Level
+4: designated-arbitrator dispute resolution" above; nothing about it
+differs at the pool grain except operating on one `Assignment` instead of a
+whole position, so ruling on one disputed slice never touches a sibling's.
 
 Each `Assignment` is independent: one provider's default, or one slice being
 disputed, does not affect a sibling assignment from another provider in the
@@ -424,14 +482,15 @@ Per the project's construction discipline (destination-driven, not
 MVP-driven — see `AGENTS.md`), named as the next coherent levels toward the
 destination, not patches on a throwaway prototype:
 
-- **No dispute adjudication (Level 4).** Level 3 gives disputes a
-  structure (evidence hash, response window, a declared conservative
-  default) but no judgment: `resolveDisputeByTimeout` always refunds the
-  buyer, regardless of which side's claim was actually correct. A real
-  resolution mechanism — a designated arbitrator, staked jurors, an oracle
-  reading offchain evidence — would let a dispute resolve on its merits
-  before the timeout, with the timeout becoming a true last resort instead
-  of the only resolution path that exists today.
+- **Single-arbitrator trust, not decentralized adjudication (Level 5).**
+  Level 4 lets a dispute resolve on its merits via a designated arbitrator
+  instead of only the conservative timeout, but that arbitrator is one
+  trusted address the buyer accepted by reserving — no staking, no
+  slashing for a bad-faith ruling, no multi-party quorum, no oracle reading
+  offchain evidence independently. A corrupt or careless arbitrator can
+  still rule wrongly with no onchain consequence beyond reputational. Staked
+  jurors, an appeals path, or an oracle-fed verdict would be the next
+  coherent level toward genuinely trust-minimized adjudication.
 - **Push-payment griefing.** `_payout` uses `.call` and requires success. A
   recipient whose fallback always reverts can block their *own* payout path
   (a provider blocking their own `expire`, a buyer blocking their own
@@ -462,8 +521,8 @@ forge build
 forge test
 ```
 
-Last run: 71/71 tests passed (`CapacityMarket.t.sol`: 31,
-`CapacityPool.t.sol`: 34, `RedTeam.t.sol`: 6). This proves the invariants
+Last run: 80/80 tests passed (`CapacityMarket.t.sol`: 36,
+`CapacityPool.t.sol`: 38, `RedTeam.t.sol`: 6). This proves the invariants
 stated above hold under the specific scenarios each test encodes,
 including the three historical vulnerabilities in
 `docs/SECURITY_AUDIT_2026-10-01.md` staying fixed. It does not constitute an

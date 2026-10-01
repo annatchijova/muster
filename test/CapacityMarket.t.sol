@@ -18,6 +18,7 @@ contract CapacityMarketTest is Test {
     uint64 constant DISPUTE_WINDOW = 2 days;
     bytes32 constant EVIDENCE_HASH = keccak256("incident report #1");
     bytes32 constant REASON_HASH = keccak256("work did not match the incident report");
+    address constant NO_ARBITRATOR = address(0);
 
     uint64 validFrom;
     uint64 validUntil;
@@ -34,13 +35,14 @@ contract CapacityMarketTest is Test {
     }
 
     function _status(uint256 positionId) internal view returns (CapacityMarket.Status status) {
-        (,,,,,,,,,,,,, status) = market.positions(positionId);
+        (,,,,,,,,,,,,,, status) = market.positions(positionId);
     }
 
     function _list() internal returns (uint256 positionId) {
         vm.prank(provider);
-        positionId =
-            market.listCapacity{value: COLLATERAL}(DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, PRICE);
+        positionId = market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE
+        );
     }
 
     function _listAndReserve() internal returns (uint256 positionId) {
@@ -149,6 +151,7 @@ contract CapacityMarketTest is Test {
             ,
             ,
             address currentBuyer,
+            ,
             ,
             uint256 collateral,
             ,
@@ -283,7 +286,7 @@ contract CapacityMarketTest is Test {
     function test_invalid_window_reverts() public {
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.InvalidWindow.selector);
-        market.listCapacity(DOMAIN, 4, validUntil, validFrom, SLA, DISPUTE_WINDOW, PRICE);
+        market.listCapacity(DOMAIN, 4, validUntil, validFrom, SLA, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE);
     }
 
     // --- Duration bound (SECURITY_AUDIT 2026-10-01 findings F2/F3) ----------
@@ -293,7 +296,7 @@ contract CapacityMarketTest is Test {
 
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.DurationTooLong.selector);
-        market.listCapacity(DOMAIN, 4, validFrom, validUntil, tooLong, DISPUTE_WINDOW, PRICE);
+        market.listCapacity(DOMAIN, 4, validFrom, validUntil, tooLong, DISPUTE_WINDOW, NO_ARBITRATOR, PRICE);
     }
 
     function test_listCapacity_rejects_disputeWindow_above_MAX_DURATION() public {
@@ -301,16 +304,146 @@ contract CapacityMarketTest is Test {
 
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.DurationTooLong.selector);
-        market.listCapacity(DOMAIN, 4, validFrom, validUntil, SLA, tooLong, PRICE);
+        market.listCapacity(DOMAIN, 4, validFrom, validUntil, SLA, tooLong, NO_ARBITRATOR, PRICE);
     }
 
     function test_listCapacity_accepts_activationSLA_and_disputeWindow_at_MAX_DURATION() public {
         uint64 maxDuration = market.MAX_DURATION();
 
         vm.prank(provider);
-        uint256 positionId =
-            market.listCapacity{value: COLLATERAL}(DOMAIN, 4, validFrom, validUntil, maxDuration, maxDuration, PRICE);
+        uint256 positionId = market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, maxDuration, maxDuration, NO_ARBITRATOR, PRICE
+        );
         assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Listed));
+    }
+
+    // --- Level 4: designated-arbitrator dispute resolution ------------------
+
+    function test_resolveDispute_arbitrator_rules_for_provider() public {
+        address arbitrator = makeAddr("arbitrator");
+        vm.prank(provider);
+        uint256 positionId = market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, arbitrator, PRICE
+        );
+        vm.prank(buyer);
+        market.reserve{value: PRICE}(positionId);
+        vm.prank(buyer);
+        market.activate(positionId);
+        vm.prank(provider);
+        market.acceptActivation(positionId);
+        vm.prank(provider);
+        market.claimDelivery(positionId, EVIDENCE_HASH);
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+
+        uint256 providerBefore = provider.balance;
+        vm.prank(arbitrator);
+        market.resolveDispute(positionId, true);
+
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Settled));
+        assertEq(provider.balance, providerBefore + PRICE + COLLATERAL);
+    }
+
+    function test_resolveDispute_arbitrator_rules_for_buyer() public {
+        address arbitrator = makeAddr("arbitrator");
+        vm.prank(provider);
+        uint256 positionId = market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, arbitrator, PRICE
+        );
+        vm.prank(buyer);
+        market.reserve{value: PRICE}(positionId);
+        vm.prank(buyer);
+        market.activate(positionId);
+        vm.prank(provider);
+        market.acceptActivation(positionId);
+        vm.prank(provider);
+        market.claimDelivery(positionId, EVIDENCE_HASH);
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+
+        uint256 buyerBefore = buyer.balance;
+        vm.prank(arbitrator);
+        market.resolveDispute(positionId, false);
+
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Refunded));
+        assertEq(buyer.balance, buyerBefore + PRICE + COLLATERAL);
+    }
+
+    function test_resolveDispute_by_non_arbitrator_reverts() public {
+        address arbitrator = makeAddr("arbitrator");
+        vm.prank(provider);
+        uint256 positionId = market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, arbitrator, PRICE
+        );
+        vm.prank(buyer);
+        market.reserve{value: PRICE}(positionId);
+        vm.prank(buyer);
+        market.activate(positionId);
+        vm.prank(provider);
+        market.acceptActivation(positionId);
+        vm.prank(provider);
+        market.claimDelivery(positionId, EVIDENCE_HASH);
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+
+        vm.prank(buyer); // not the named arbitrator
+        vm.expectRevert(CapacityMarket.NotArbitrator.selector);
+        market.resolveDispute(positionId, true);
+    }
+
+    /// @notice A position opted out of arbitration (arbitrator == address(0))
+    /// must fall back to the exact Level 3 behavior: nobody can ever call
+    /// resolveDispute successfully, only resolveDisputeByTimeout applies.
+    function test_resolveDispute_reverts_for_everyone_when_no_arbitrator_named() public {
+        uint256 positionId = _throughDeliveryClaimed(); // listed via _list(), NO_ARBITRATOR
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+
+        vm.prank(buyer);
+        vm.expectRevert(CapacityMarket.NotArbitrator.selector);
+        market.resolveDispute(positionId, true);
+
+        vm.prank(provider);
+        vm.expectRevert(CapacityMarket.NotArbitrator.selector);
+        market.resolveDispute(positionId, true);
+
+        // The timeout fallback still works exactly as in Level 3.
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+        uint256 buyerBefore = buyer.balance;
+        market.resolveDisputeByTimeout(positionId);
+        assertEq(buyer.balance, buyerBefore + PRICE + COLLATERAL);
+    }
+
+    function test_resolveDispute_races_resolveDisputeByTimeout_arbitrator_first_wins() public {
+        address arbitrator = makeAddr("arbitrator");
+        vm.prank(provider);
+        uint256 positionId = market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, arbitrator, PRICE
+        );
+        vm.prank(buyer);
+        market.reserve{value: PRICE}(positionId);
+        vm.prank(buyer);
+        market.activate(positionId);
+        vm.prank(provider);
+        market.acceptActivation(positionId);
+        vm.prank(provider);
+        market.claimDelivery(positionId, EVIDENCE_HASH);
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1); // timeout window has passed too
+
+        vm.prank(arbitrator);
+        market.resolveDispute(positionId, true); // arbitrator still gets to rule
+
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Settled));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityMarket.WrongStatus.selector, CapacityMarket.Status.Disputed, CapacityMarket.Status.Settled
+            )
+        );
+        market.resolveDisputeByTimeout(positionId); // already resolved, cannot double-pay
     }
 
     // --- Level 3: delivery claims and disputes -------------------------
