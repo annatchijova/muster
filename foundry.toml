@@ -8,4 +8,15 @@ libs = ["lib"]
 # the structs or the getters just to dodge a compiler limitation.
 via_ir = true
 
+[rpc_endpoints]
+monad_testnet = "${MONAD_TESTNET_RPC_URL}"
+
+[etherscan]
+# Sourcify-backed verifier BlockVision runs for Monad; `forge verify-contract`
+# reads this profile when --verifier sourcify --verifier-url is passed
+# explicitly (see README "Deploying to Monad testnet"). Chain id 10143 is
+# Monad testnet, current as of this project's own verification against
+# docs.monad.xyz — re-check before trusting it if this file is read later.
+monad_testnet = { key = "unused", chain = 10143, url = "https://sourcify-api-monad.blockvision.org/" }
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

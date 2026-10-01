@@ -120,6 +120,24 @@ forge build
 forge test
 ```
 
+## Deploying to Monad testnet
+
+```bash
+cp .env.example .env   # fill in PRIVATE_KEY (a funded Monad testnet account)
+source .env
+
+forge script script/Deploy.s.sol \
+  --rpc-url monad_testnet \
+  --broadcast \
+  --verify --verifier sourcify --verifier-url https://sourcify-api-monad.blockvision.org/
+```
+
+Needs a Monad testnet account funded with MON from [faucet.monad.xyz](https://faucet.monad.xyz).
+`.env` is gitignored; never commit it. Chain id 10143, RPC
+`https://testnet-rpc.monad.xyz` — current as of Oct 2026 per
+[docs.monad.xyz](https://docs.monad.xyz/); testnets get reset, so re-check
+those two values there if a deploy fails with a chain-id mismatch.
+
 ## Track & scope
 
 Built for the Monad hackathon (**Onchain Finance & Trading** track): a new
