@@ -17,18 +17,17 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 
 91/91 tests passing total (including `test/RedTeam.t.sol`'s 6-test
 regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three confirmed
-and fixed findings). Four generations of deploy to Monad testnet (chain id
+and fixed findings). Five generations of deploy to Monad testnet (chain id
 10143), all kept live and verified as this project's own audit trail — see
 `README.md`'s "Live on Monad testnet" for every address and which is
 current. Current (Level 5): `CapacityMarket` at
-`0x1224950b84a86f57cB4AE838D372879960862896`, `CapacityPool` at
-`0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` — these are the **Level 4**
-contracts (single `arbitrator` field, not yet the panel mechanism); Level 5
-changed the ABI again (`arbitrator` → `panelMembers`/`panelThreshold`) and
-has not been deployed yet. The pre-Level-4 pair was exercised end-to-end
-with real MON; everything before that is the still-vulnerable pre-audit
-deploy. Not independently audited beyond this project's own red-team pass.
-Not deployed to mainnet.
+`0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364`, `CapacityPool` at
+`0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` — **not yet exercised live**,
+only in Foundry. The prior pair (Level 4, single `arbitrator` field) was
+also never exercised live; the pair before that (pre-Level-4, patched) was
+exercised end-to-end with real MON; everything before that is the
+still-vulnerable pre-audit deploy. Not independently audited beyond this
+project's own red-team pass. Not deployed to mainnet.
 
 **What "deployed" means here, for the pre-Level-4 pair that was actually
 exercised:** those contracts were run end-to-end on the live testnet — `listCapacity` →

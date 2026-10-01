@@ -137,27 +137,28 @@ forge test
 
 ## Live on Monad testnet
 
-Redeployed 2026-10-01 after adding Level 4 (`arbitrator` is new public
-state, so it changed the ABI from the prior deploy). Current,
-Sourcify-verified (`exact_match`) contracts:
+Redeployed 2026-10-01 after adding Level 5 (`panelMembers`/
+`panelThreshold` replaced the single `arbitrator` field, changing the ABI
+again). Current, Sourcify-verified (`exact_match`) contracts:
 
 | Contract | Address |
 |---|---|
-| `CapacityMarket` | `0x1224950b84a86f57cB4AE838D372879960862896` |
-| `CapacityPool` | `0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` |
+| `CapacityMarket` | `0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364` |
+| `CapacityPool` | `0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` |
+
+Not yet exercised live — only in Foundry so far.
 
 **Earlier deploys, kept live and verified as this project's audit trail —
 do not send value to any of them:**
 
 | Contract | Address | Why it's stale |
 |---|---|---|
+| `CapacityMarket` | `0x1224950b84a86f57cB4AE838D372879960862896` | Level 4 (single `arbitrator` field, not the panel) — not exercised live. |
+| `CapacityPool` | `0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` | Same, Level 4. |
 | `CapacityMarket` | `0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f` | Pre-Level-4: patched (F1/F2/F3), exercised end-to-end live — list → reserve → activate → accept → claim delivery → settle, real MON. Provider collected exactly `price + collateral` (`0.07 MON`), contract balance returned to `0`. Representative tx hashes: `listCapacity` 0x2ef9c44c…ed23b, `claimDelivery` 0xeb6f1522…d709, `settle` 0xddf84f28…dd99. |
 | `CapacityPool` | `0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F` | Same pre-Level-4 patched version, same live exercise (`contribute` 0xefd50828…db13, `settleAssignment` 0xdf771375…da51, `0.03 MON` collected). |
 | `CapacityMarket` | `0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c` | **Vulnerable** — the original pre-audit deploy, still has F1/F2/F3. |
 | `CapacityPool` | `0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3` | Same, vulnerable. |
-
-The Level 4 contracts above have not yet been exercised live the way the
-pre-Level-4 deploy was — only locally, in Foundry.
 
 ## Deploying to Monad testnet
 
