@@ -50,11 +50,19 @@ A `CapacityPosition` moves through one state machine, and every transition
 is a specific function call that only succeeds from the right prior state:
 
 ```
-LISTED → RESERVED → ACTIVATED → ACCEPTED → SETTLED
-            │            │
+LISTED → RESERVED → ACTIVATED → ACCEPTED → DELIVERY CLAIMED → SETTLED
+            │            │                        │
+            │            │                        └─ disputed → refunded on timeout
             ├─ transfer  └─ (SLA missed) → DEFAULTED → collateral to buyer
             └─ (window closes unused) → EXPIRED → collateral to provider
 ```
+
+Settlement isn't a bare "buyer says so" either: the provider has to claim
+delivery first, committing to a hash of whatever evidence backs the claim,
+which starts the buyer's window to approve or dispute it. Nobody can go
+silent and lock the other side's money — an unanswered claim pays the
+provider once the window passes, and an unresolved dispute refunds the
+buyer once *its* window passes.
 
 There is no path that lets a position be reserved twice, activated twice, or
 settled after it has already defaulted — see the Technical README for the
@@ -93,10 +101,18 @@ rest — each routed slice is its own accept/settle/default lifecycle,
 Level 1's state machine run once per assigned provider instead of once per
 position.
 
+**Level 3**: delivery claims and disputes, layered onto both. A provider's
+`settle` is no longer a bare approval — it follows a hash-committed delivery
+claim and a bounded response window, with a timeout path on each side so
+neither a silent buyer nor an unresolved dispute can lock funds forever.
+What it still doesn't do: decide who's actually right in a dispute — that's
+real arbitration, explicitly out of scope for now and named as the next
+level in the Technical README.
+
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`).
-- 40/40 tests passing (`test/`), covering both lifecycles and every
-  invariant violation.
+- 60/60 tests passing (`test/`), covering all three levels' lifecycles and
+  every invariant violation.
 - Not yet deployed to Monad testnet. Not yet audited.
 
 ```bash

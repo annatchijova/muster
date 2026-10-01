@@ -9,11 +9,12 @@ for that.
 Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 
 - **Level 1 — `CapacityMarket.sol`**: single-provider capacity position, full
-  lifecycle. 17/17 tests passing.
+  lifecycle plus Level 3's delivery-claim/dispute flow. 28/28 tests passing.
 - **Level 2 — `CapacityPool.sol`**: fungible, multi-provider capacity pooled
-  by domain class, routed FIFO at activation. 23/23 tests passing.
+  by domain class, routed FIFO at activation, same Level 3 flow at the
+  per-assignment grain. 32/32 tests passing.
 
-40/40 tests passing total, local Anvil chain only. Not audited. Not deployed
+60/60 tests passing total, local Anvil chain only. Not audited. Not deployed
 to Monad testnet or mainnet yet.
 
 ## What MUSTER is, precisely
@@ -50,8 +51,25 @@ RESERVED ──transfer()──▶ RESERVED (new buyer, same terms)
   ▼
 ACTIVATED
   │  │
-  │  ├─ acceptActivation() [within SLA] ──▶ ACCEPTED ──settle()──▶ SETTLED
-  │  │                                                    (price + collateral → provider)
+  │  ├─ acceptActivation() [within SLA] ──▶ ACCEPTED
+  │  │                                          │  claimDelivery(evidenceHash)
+  │  │                                          ▼
+  │  │                                    DELIVERY CLAIMED
+  │  │                                          │     │
+  │  │                                 settle() │     │ dispute(reasonHash)
+  │  │                     [buyer approves,     │     │ [within disputeWindow]
+  │  │                      any time]           ▼     ▼
+  │  │                                      SETTLED  DISPUTED
+  │  │                                      (price +    │  resolveDisputeByTimeout()
+  │  │                                     collateral    │  [after a second disputeWindow]
+  │  │                                     → provider)   ▼
+  │  │                                              REFUNDED
+  │  │                               finalizeDelivery()  (price + collateral → buyer)
+  │  │                          [anyone, after disputeDeadline,
+  │  │                           if buyer never settled/disputed]
+  │  │                                          │
+  │  │                                          ▼
+  │  │                                      SETTLED
   │  │
   │  └─ claimDefault() [SLA missed] ──▶ DEFAULTED
   │                                       (collateral → buyer)
@@ -60,7 +78,7 @@ ACTIVATED
 `expire()` also accepts a position still in `Listed` (never reserved) once
 its window has closed — see "Price on expiry" below for why the payout
 differs between the two originating states. All transitions are one-way;
-`Settled`, `Expired`, `Defaulted` are terminal.
+`Settled`, `Expired`, `Defaulted`, `Refunded` are terminal.
 
 ### Invariants
 
@@ -72,10 +90,18 @@ differs between the two originating states. All transitions are one-way;
 3. **Transfer preserves the asset.** `transfer()` mutates only `buyer`.
    Test: `test_transfer_preserves_window_sla_and_collateral`.
 4. **Collateral and price are each paid out exactly once per position,**
-   by exactly one of `settle`, `claimDefault`, or `expire` — mutually
-   exclusive by status.
+   by exactly one of `settle`, `finalizeDelivery`, `resolveDisputeByTimeout`,
+   `claimDefault`, or `expire` — mutually exclusive by status.
 5. **Reentrancy cannot double-pay.** Status is set to its terminal value
    before the external call in `_payout` (checks-effects-interactions).
+6. **Every terminal state has a payout path.** `Settled`, `Expired`,
+   `Defaulted`, and `Refunded` are the only terminal states, and each one is
+   reached by a function that pays out `price`/`collateral` in the same
+   call that sets it — there is no terminal state a position can reach
+   that leaves funds with no function able to move them. This invariant
+   was violated twice during this project's own construction (see "Price on
+   expiry" and "Level 3" below) and is now treated as a first-class check,
+   not an implicit assumption.
 
 ### Price on expiry — a stated economic rule, not a missing refund
 
@@ -97,6 +123,55 @@ method), not by a test, because no test had been written to check for a
 `test_expire_unused_reservation_pays_collateral_and_price_to_provider`,
 `test_expire_never_reserved_listing_returns_collateral_only`.
 
+### Level 3: delivery claims and disputes
+
+Before Level 3, `settle()` ran directly from `Accepted` and was pure
+buyer-honesty: the buyer's address calling it was the only onchain fact
+involved, and an unresponsive buyer could leave a provider's `price` and
+`collateral` locked in `Accepted` forever, with no timeout of any kind. Level
+3 inserts a claim/response step between acceptance and settlement:
+
+- **`claimDelivery(positionId, evidenceHash)`** — provider only, from
+  `Accepted`. Commits `evidenceHash` (a hash of whatever offchain evidence
+  backs the claim; the contract never interprets it) and opens a
+  `disputeWindow`-long clock, moving to `DeliveryClaimed`.
+- **`settle(positionId)`** — buyer only, from `DeliveryClaimed`, any time.
+  Explicit approval; pays the provider immediately, no need to wait out the
+  window. (Its precondition moved from `Accepted` to `DeliveryClaimed` —
+  settlement without a delivery claim on record no longer exists.)
+- **`dispute(positionId, reasonHash)`** — buyer only, from
+  `DeliveryClaimed`, before `disputeDeadline`. Commits `reasonHash` the same
+  way; moves to `Disputed`.
+- **`finalizeDelivery(positionId)`** — anyone, from `DeliveryClaimed`, after
+  `disputeDeadline`. Pays the provider if the buyer never responded at all —
+  the liveness fix for the gap `claimDelivery` introduces, mirroring how
+  `claimDefault` already protects the buyer against a silent provider on the
+  other side of the state machine.
+- **`resolveDisputeByTimeout(positionId)`** — anyone, from `Disputed`, after
+  a *second* `disputeWindow`-long period (restarted by `dispute()` itself).
+  Refunds the **buyer**.
+
+### A second fund-lock bug, same root cause, caught the same way
+
+The first version of this Level shipped `dispute()` as a true terminal
+state with no function that could ever pay out `price`/`collateral` from
+`Disputed` — the identical defect class as the `expire()` bug above
+(invariant 6 above exists specifically because this happened twice),
+just reached through a new state instead of an old one. There is no
+arbitrator in this contract and this level does not invent one — building
+real dispute adjudication (multi-party resolution, evidence review, partial
+awards) is explicitly out of scope here, not a gap to paper over with fake
+logic. What is in scope, because leaving funds permanently stuck is never
+acceptable regardless of whether adjudication exists: `resolveDisputeByTimeout`
+closes `Disputed` after a second window, defaulting to a **refund**, not a
+payment to the provider — a disputed claim does not get the silent-party
+benefit of the doubt an undisputed one gets from `finalizeDelivery`. This is
+a declared, conservative default, not a verdict on the merits of any
+specific dispute, and is designed to be superseded by a real resolution
+mechanism (Level 4) before `resolveDisputeByTimeout`'s window would ever
+need to fire in practice. Tests: `test_resolveDisputeByTimeout_before_window_reverts`,
+`test_resolveDisputeByTimeout_refunds_buyer_after_window`.
+
 ---
 
 ## Level 2 — `CapacityPool.sol`: fungible multi-provider pool
@@ -113,10 +188,10 @@ class). Bolting that onto `CapacityPosition` would have meant a second,
 incompatible meaning for half its fields depending on a mode flag — exactly
 the kind of "extend by special-casing" that erodes a state machine's
 invariants over time. `CapacityPool` reuses Level 1's *pattern*
-(Pending → Accepted → Settled, or Pending → Defaulted, one-way, collateral
-locked once and paid once) at the grain of an `Assignment` instead of a
-whole position, which is what makes it a coherent next level rather than a
-rewrite.
+(Pending to Accepted to DeliveryClaimed to Settled/Disputed to Refunded, or
+Pending to Defaulted, one-way, collateral locked once and paid once) at the
+grain of an `Assignment` instead of a whole position, which is what makes it
+a coherent next level rather than a rewrite.
 
 ### Fungibility: `TermsClass` and `classId`
 
@@ -126,6 +201,7 @@ struct TermsClass {
     uint64 validFrom;
     uint64 validUntil;
     uint64 activationSLA;
+    uint64 disputeWindow;
     uint256 pricePerUnit;
     uint256 collateralPerUnit;
 }
@@ -154,19 +230,35 @@ reserve(classId, qty) ──▶ Reservation{Reserved}         [available -= qty]
         ──▶ Reservation{Activated}, one Assignment{Pending} per provider slice
               │
               ├─ acceptAssignment() [within shared SLA] ──▶ Assignment{Accepted}
-              │        ──settleAssignment()──▶ Assignment{Settled}  (price+collateral → provider)
+              │        │  claimAssignmentDelivery(evidenceHash)
+              │        ▼
+              │   Assignment{DeliveryClaimed}
+              │        │                    │
+              │        │ settleAssignment() │ disputeAssignment(reasonHash)
+              │        │ [buyer, any time]  │ [within disputeWindow]
+              │        ▼                    ▼
+              │   Settled              Disputed
+              │   (price+collateral        │  resolveAssignmentDisputeByTimeout()
+              │    → provider)             │  [after a second disputeWindow]
+              │                            ▼
+              │                       Refunded (price+collateral → buyer)
               │
-              └─ claimAssignmentDefault() [SLA missed] ──▶ Assignment{Defaulted}
+              │   finalizeAssignmentDelivery() [anyone, after disputeDeadline,
+              │     if buyer never settled/disputed] ──▶ Settled
+              │
+              └─ claimAssignmentDefault() [SLA missed, from Pending] ──▶ Assignment{Defaulted}
                        (collateral → buyer)
 
 withdrawContribution()  [window closed, any time] ──▶ pays collateral for
                           a contribution's unassigned `remaining`, to its provider
 ```
 
-Each `Assignment` is independent: one provider's default does not affect a
-sibling assignment from another provider in the same reservation (partial
-fulfillment is a first-class outcome, not an edge case). Test:
-`test_one_provider_default_does_not_block_other_assignments`.
+Each `Assignment` is independent: one provider's default, or one slice being
+disputed, does not affect a sibling assignment from another provider in the
+same reservation (partial fulfillment, and partial disagreement, are each a
+first-class outcome, not an edge case). Tests:
+`test_one_provider_default_does_not_block_other_assignments`,
+`test_one_assignment_dispute_does_not_block_sibling_finalization`.
 
 ### Invariant: `reserved + assigned ≤ committed capacity`
 
@@ -271,10 +363,18 @@ Not onchain, and not provable by either contract alone:
 
 `acceptActivation`/`acceptAssignment` only prove an address sent a
 transaction inside the SLA window — not that a human did anything.
-`settle`/`settleAssignment` only prove the buyer's address called it — an
-honesty assumption about the buyer's own interest, not a dispute-resolution
-mechanism. **This is a known, stated limitation, not an oversight**: closing
-it is Level 3's explicit target (see below).
+`claimDelivery`/`claimAssignmentDelivery` only prove the provider committed
+to a hash — the contract never interprets what the hash points to, and
+nothing stops a provider from hashing fabricated evidence. `dispute`/
+`disputeAssignment` only prove the buyer objected and when — not that the
+objection is correct. **This remains a known, stated limitation, not an
+oversight, even after Level 3**: Level 3 makes delivery an explicit,
+timestamped, two-sided claim instead of a silent buyer-honesty call, and
+guarantees every path through it terminates in a payout (see invariant 6
+above) — it does not, and does not claim to, adjudicate whether a dispute is
+justified. Real adjudication (reviewing the evidence behind `evidenceHash`
+and `reasonHash`, weighing them, issuing a non-default verdict) is Level 4's
+explicit target, named below.
 
 ## Known limitations and next levels
 
@@ -282,10 +382,14 @@ Per the project's construction discipline (destination-driven, not
 MVP-driven — see `AGENTS.md`), named as the next coherent levels toward the
 destination, not patches on a throwaway prototype:
 
-- **No dispute/attestation layer (Level 3).** `settle`/`settleAssignment`
-  are buyer-honesty-based. A later level routes delivery confirmation
-  through an offchain attestation (hash-committed evidence) before
-  settlement becomes callable, or exposes a dispute window.
+- **No dispute adjudication (Level 4).** Level 3 gives disputes a
+  structure (evidence hash, response window, a declared conservative
+  default) but no judgment: `resolveDisputeByTimeout` always refunds the
+  buyer, regardless of which side's claim was actually correct. A real
+  resolution mechanism — a designated arbitrator, staked jurors, an oracle
+  reading offchain evidence — would let a dispute resolve on its merits
+  before the timeout, with the timeout becoming a true last resort instead
+  of the only resolution path that exists today.
 - **Push-payment griefing.** `_payout` uses `.call` and requires success. A
   recipient whose fallback always reverts can block their *own* payout path
   (a provider blocking their own `expire`, a buyer blocking their own
@@ -316,10 +420,18 @@ forge build
 forge test
 ```
 
-Last run: 40/40 tests passed (`CapacityMarket.t.sol`: 17, `CapacityPool.t.sol`:
-23). This proves the invariants stated above hold under the specific
+Last run: 60/60 tests passed (`CapacityMarket.t.sol`: 28, `CapacityPool.t.sol`:
+32). This proves the invariants stated above hold under the specific
 scenarios each test encodes. It does not constitute a security audit, and no
 fuzzing or formal verification has been run yet.
+
+Note: `foundry.toml` sets `via_ir = true`. The `CapacityPosition`/`Assignment`
+structs grew wide enough after Level 3's delivery-claim fields that the
+default codegen hit "stack too deep" compiling the public struct getters;
+`via_ir` avoids restructuring either struct or hand-writing their getters
+just to dodge that compiler limitation. It slows compilation somewhat and is
+worth revisiting only if build time becomes a real problem at this project's
+current size.
 
 ## License
 

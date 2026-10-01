@@ -15,6 +15,9 @@ contract CapacityMarketTest is Test {
     uint256 constant PRICE = 1 ether;
     uint256 constant COLLATERAL = 0.5 ether;
     uint64 constant SLA = 30 minutes;
+    uint64 constant DISPUTE_WINDOW = 2 days;
+    bytes32 constant EVIDENCE_HASH = keccak256("incident report #1");
+    bytes32 constant REASON_HASH = keccak256("work did not match the incident report");
 
     uint64 validFrom;
     uint64 validUntil;
@@ -30,9 +33,14 @@ contract CapacityMarketTest is Test {
         market = new CapacityMarket();
     }
 
+    function _status(uint256 positionId) internal view returns (CapacityMarket.Status status) {
+        (,,,,,,,,,,,,, status) = market.positions(positionId);
+    }
+
     function _list() internal returns (uint256 positionId) {
         vm.prank(provider);
-        positionId = market.listCapacity{value: COLLATERAL}(DOMAIN, 4, validFrom, validUntil, SLA, PRICE);
+        positionId =
+            market.listCapacity{value: COLLATERAL}(DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, PRICE);
     }
 
     function _listAndReserve() internal returns (uint256 positionId) {
@@ -47,21 +55,29 @@ contract CapacityMarketTest is Test {
         market.activate(positionId);
     }
 
+    function _throughAccepted() internal returns (uint256 positionId) {
+        positionId = _listReserveActivate();
+        vm.prank(provider);
+        market.acceptActivation(positionId);
+    }
+
+    function _throughDeliveryClaimed() internal returns (uint256 positionId) {
+        positionId = _throughAccepted();
+        vm.prank(provider);
+        market.claimDelivery(positionId, EVIDENCE_HASH);
+    }
+
     // --- Happy path -------------------------------------------------
 
     function test_fullLifecycle_settles_and_pays_provider() public {
-        uint256 positionId = _listReserveActivate();
-
-        vm.prank(provider);
-        market.acceptActivation(positionId);
+        uint256 positionId = _throughDeliveryClaimed();
 
         uint256 providerBalanceBefore = provider.balance;
 
         vm.prank(buyer);
         market.settle(positionId);
 
-        (,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
-        assertEq(uint8(status), uint8(CapacityMarket.Status.Settled));
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Settled));
         assertEq(provider.balance, providerBalanceBefore + PRICE + COLLATERAL);
     }
 
@@ -80,17 +96,16 @@ contract CapacityMarketTest is Test {
     // --- Invariant: no double consumption -----------------------------
 
     function test_settle_twice_reverts() public {
-        uint256 positionId = _listReserveActivate();
-
-        vm.prank(provider);
-        market.acceptActivation(positionId);
+        uint256 positionId = _throughDeliveryClaimed();
 
         vm.prank(buyer);
         market.settle(positionId);
 
         vm.prank(buyer);
         vm.expectRevert(
-            abi.encodeWithSelector(CapacityMarket.WrongStatus.selector, CapacityMarket.Status.Accepted, CapacityMarket.Status.Settled)
+            abi.encodeWithSelector(
+                CapacityMarket.WrongStatus.selector, CapacityMarket.Status.DeliveryClaimed, CapacityMarket.Status.Settled
+            )
         );
         market.settle(positionId);
     }
@@ -103,6 +118,18 @@ contract CapacityMarketTest is Test {
             abi.encodeWithSelector(CapacityMarket.WrongStatus.selector, CapacityMarket.Status.Reserved, CapacityMarket.Status.Activated)
         );
         market.activate(positionId);
+    }
+
+    function test_settle_before_claimDelivery_reverts() public {
+        uint256 positionId = _throughAccepted();
+
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityMarket.WrongStatus.selector, CapacityMarket.Status.DeliveryClaimed, CapacityMarket.Status.Accepted
+            )
+        );
+        market.settle(positionId);
     }
 
     // --- Invariant: transfer preserves the asset, changes only ownership ---
@@ -120,9 +147,12 @@ contract CapacityMarketTest is Test {
             uint64 vUntil,
             uint64 sla,
             ,
+            ,
             address currentBuyer,
             ,
             uint256 collateral,
+            ,
+            ,
             ,
         ) = market.positions(positionId);
 
@@ -150,8 +180,7 @@ contract CapacityMarketTest is Test {
         vm.prank(otherBuyer);
         market.activate(positionId);
 
-        (,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
-        assertEq(uint8(status), uint8(CapacityMarket.Status.Activated));
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Activated));
     }
 
     // --- Timeout / default path: collateral compensates the buyer -------
@@ -164,8 +193,7 @@ contract CapacityMarketTest is Test {
         uint256 buyerBalanceBefore = buyer.balance;
         market.claimDefault(positionId);
 
-        (,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
-        assertEq(uint8(status), uint8(CapacityMarket.Status.Defaulted));
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Defaulted));
         assertEq(buyer.balance, buyerBalanceBefore + COLLATERAL);
     }
 
@@ -196,8 +224,7 @@ contract CapacityMarketTest is Test {
         uint256 providerBalanceBefore = provider.balance;
         market.expire(positionId);
 
-        (,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
-        assertEq(uint8(status), uint8(CapacityMarket.Status.Expired));
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Expired));
         // Reserved-then-lapsed: the provider keeps both the collateral and
         // the price, the same way an unexercised option's premium stays
         // with the writer. See CapacityMarket.expire()'s NatSpec.
@@ -212,8 +239,7 @@ contract CapacityMarketTest is Test {
         uint256 providerBalanceBefore = provider.balance;
         market.expire(positionId);
 
-        (,,,,,,,,,, CapacityMarket.Status status) = market.positions(positionId);
-        assertEq(uint8(status), uint8(CapacityMarket.Status.Expired));
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Expired));
         assertEq(provider.balance, providerBalanceBefore + COLLATERAL);
     }
 
@@ -254,6 +280,127 @@ contract CapacityMarketTest is Test {
     function test_invalid_window_reverts() public {
         vm.prank(provider);
         vm.expectRevert(CapacityMarket.InvalidWindow.selector);
-        market.listCapacity(DOMAIN, 4, validUntil, validFrom, SLA, PRICE);
+        market.listCapacity(DOMAIN, 4, validUntil, validFrom, SLA, DISPUTE_WINDOW, PRICE);
+    }
+
+    // --- Level 3: delivery claims and disputes -------------------------
+
+    function test_claimDelivery_by_non_provider_reverts() public {
+        uint256 positionId = _throughAccepted();
+
+        vm.prank(buyer);
+        vm.expectRevert(CapacityMarket.NotProvider.selector);
+        market.claimDelivery(positionId, EVIDENCE_HASH);
+    }
+
+    function test_dispute_within_window_blocks_settlement_and_finalization() public {
+        uint256 positionId = _throughDeliveryClaimed();
+
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Disputed));
+
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityMarket.WrongStatus.selector, CapacityMarket.Status.DeliveryClaimed, CapacityMarket.Status.Disputed
+            )
+        );
+        market.settle(positionId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityMarket.WrongStatus.selector, CapacityMarket.Status.DeliveryClaimed, CapacityMarket.Status.Disputed
+            )
+        );
+        market.finalizeDelivery(positionId);
+    }
+
+    function test_resolveDisputeByTimeout_before_window_reverts() public {
+        uint256 positionId = _throughDeliveryClaimed();
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+
+        vm.expectRevert(CapacityMarket.DisputeWindowOpen.selector);
+        market.resolveDisputeByTimeout(positionId);
+    }
+
+    function test_resolveDisputeByTimeout_refunds_buyer_after_window() public {
+        uint256 positionId = _throughDeliveryClaimed();
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        uint256 buyerBalanceBefore = buyer.balance;
+        market.resolveDisputeByTimeout(positionId); // callable by anyone
+
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Refunded));
+        assertEq(buyer.balance, buyerBalanceBefore + PRICE + COLLATERAL);
+    }
+
+    function test_resolveDisputeByTimeout_twice_reverts() public {
+        uint256 positionId = _throughDeliveryClaimed();
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+        market.resolveDisputeByTimeout(positionId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityMarket.WrongStatus.selector, CapacityMarket.Status.Disputed, CapacityMarket.Status.Refunded
+            )
+        );
+        market.resolveDisputeByTimeout(positionId);
+    }
+
+    function test_dispute_by_non_buyer_reverts() public {
+        uint256 positionId = _throughDeliveryClaimed();
+
+        vm.prank(otherBuyer);
+        vm.expectRevert(CapacityMarket.NotBuyer.selector);
+        market.dispute(positionId, REASON_HASH);
+    }
+
+    function test_dispute_after_window_closed_reverts() public {
+        uint256 positionId = _throughDeliveryClaimed();
+
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        vm.prank(buyer);
+        vm.expectRevert(CapacityMarket.DisputeWindowClosed.selector);
+        market.dispute(positionId, REASON_HASH);
+    }
+
+    function test_finalizeDelivery_before_window_closes_reverts() public {
+        uint256 positionId = _throughDeliveryClaimed();
+
+        vm.expectRevert(CapacityMarket.DisputeWindowOpen.selector);
+        market.finalizeDelivery(positionId);
+    }
+
+    function test_finalizeDelivery_pays_provider_after_silent_buyer() public {
+        uint256 positionId = _throughDeliveryClaimed();
+
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        uint256 providerBalanceBefore = provider.balance;
+        market.finalizeDelivery(positionId); // callable by anyone, including a stranger
+
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Settled));
+        assertEq(provider.balance, providerBalanceBefore + PRICE + COLLATERAL);
+    }
+
+    function test_settle_during_window_does_not_require_waiting() public {
+        uint256 positionId = _throughDeliveryClaimed();
+
+        uint256 providerBalanceBefore = provider.balance;
+
+        vm.prank(buyer);
+        market.settle(positionId); // buyer approves immediately, no need to wait out the window
+
+        assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Settled));
+        assertEq(provider.balance, providerBalanceBefore + PRICE + COLLATERAL);
     }
 }

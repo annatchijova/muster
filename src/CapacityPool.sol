@@ -7,20 +7,23 @@ pragma solidity ^0.8.24;
 /// uses for a single provider's position, generalized to many providers
 /// contributing interchangeable capacity to the same terms class.
 ///
-/// A TermsClass (domain, window, activation SLA, price/unit, collateral/unit)
-/// defines what makes units fungible with each other. Providers contribute
-/// quantity to a class; buyers reserve quantity from the class without
-/// choosing a provider. Routing happens at `activate()` time: the contract
-/// assigns whichever contributions are oldest-first (FIFO) until the
-/// reserved quantity is covered, possibly splitting across several
-/// providers. From there each assigned slice (`Assignment`) behaves exactly
-/// like a `CapacityMarket` position: Pending -> Accepted -> Settled, or
-/// Pending -> Defaulted on an SLA miss, independently of its siblings.
+/// A TermsClass (domain, window, activation SLA, dispute window, price/unit,
+/// collateral/unit) defines what makes units fungible with each other.
+/// Providers contribute quantity to a class; buyers reserve quantity from
+/// the class without choosing a provider. Routing happens at `activate()`
+/// time: the contract assigns whichever contributions are oldest-first
+/// (FIFO) until the reserved quantity is covered, possibly splitting across
+/// several providers. From there each assigned slice (`Assignment`) behaves
+/// exactly like a `CapacityMarket` position: Pending -> Accepted ->
+/// DeliveryClaimed -> Settled (buyer-approved, or anyone-callable once the
+/// dispute window passes) or -> Disputed, or Pending -> Defaulted on an SLA
+/// miss — independently of its siblings.
 ///
-/// Level 1's five invariants hold here too, at the unit of an Assignment
-/// instead of a whole position (no double consumption, no double payout,
-/// transitions one-way). This contract adds the Level-2-specific invariant
-/// named directly in the project's design notes:
+/// Level 1's invariants hold here too, at the unit of an Assignment instead
+/// of a whole position (no double consumption, no double payout, transitions
+/// one-way, a dispute window that defaults to paying the provider rather
+/// than locking funds against a silent buyer). This contract adds the
+/// Level-2-specific invariant named directly in the project's design notes:
 ///
 ///     reserved + assigned <= committed capacity
 ///
@@ -31,8 +34,11 @@ contract CapacityPool {
     enum AssignmentStatus {
         Pending,
         Accepted,
+        DeliveryClaimed,
+        Disputed,
         Defaulted,
-        Settled
+        Settled,
+        Refunded
     }
 
     enum ReservationStatus {
@@ -46,6 +52,7 @@ contract CapacityPool {
         uint64 validFrom;
         uint64 validUntil;
         uint64 activationSLA;
+        uint64 disputeWindow;
         uint256 pricePerUnit;
         uint256 collateralPerUnit;
     }
@@ -69,6 +76,8 @@ contract CapacityPool {
         uint256 quantity;
         uint256 price;
         uint256 collateral;
+        bytes32 deliveryEvidenceHash;
+        uint64 disputeDeadline;
         AssignmentStatus status;
     }
 
@@ -91,8 +100,15 @@ contract CapacityPool {
     event ReservationExpired(uint256 indexed reservationId);
     event ReservationActivated(uint256 indexed reservationId, uint64 activationDeadline, uint256 assignmentCount);
     event AssignmentAccepted(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed provider);
+    event AssignmentDeliveryClaimed(
+        uint256 indexed reservationId, uint256 indexed assignmentIndex, bytes32 evidenceHash, uint64 disputeDeadline
+    );
+    event AssignmentDisputed(
+        uint256 indexed reservationId, uint256 indexed assignmentIndex, bytes32 reasonHash, uint64 resolutionDeadline
+    );
     event AssignmentDefaulted(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed provider);
     event AssignmentSettled(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed provider);
+    event AssignmentRefunded(uint256 indexed reservationId, uint256 indexed assignmentIndex, address indexed buyer);
     event ContributionWithdrawn(bytes32 indexed classId, uint256 indexed index, address indexed provider, uint256 amount);
 
     error InvalidWindow();
@@ -107,6 +123,8 @@ contract CapacityPool {
     error WindowNotYetClosed();
     error DeadlineNotPassed();
     error DeadlinePassed();
+    error DisputeWindowOpen();
+    error DisputeWindowClosed();
 
     modifier reservationInStatus(uint256 reservationId, ReservationStatus expected) {
         ReservationStatus actual = reservations[reservationId].status;
@@ -269,6 +287,8 @@ contract CapacityPool {
                     quantity: slice,
                     price: pool.terms.pricePerUnit * slice,
                     collateral: pool.terms.collateralPerUnit * slice,
+                    deliveryEvidenceHash: bytes32(0),
+                    disputeDeadline: 0,
                     status: AssignmentStatus.Pending
                 })
             );
@@ -318,7 +338,71 @@ contract CapacityPool {
         _payout(r.buyer, a.collateral);
     }
 
-    /// @notice Buyer confirms delivery of one accepted assignment, releasing
+    /// @notice Provider claims one accepted assignment's delivery is
+    /// complete, committing to `evidenceHash` and starting the buyer's
+    /// dispute window for that slice specifically — siblings are unaffected.
+    function claimAssignmentDelivery(uint256 reservationId, uint256 assignmentIndex, bytes32 evidenceHash)
+        external
+        reservationInStatus(reservationId, ReservationStatus.Activated)
+    {
+        Reservation storage r = reservations[reservationId];
+        Assignment storage a = r.assignments[assignmentIndex];
+        if (a.status != AssignmentStatus.Accepted) revert WrongAssignmentStatus(AssignmentStatus.Accepted, a.status);
+        if (msg.sender != a.provider) revert NotProvider();
+
+        a.deliveryEvidenceHash = evidenceHash;
+        a.disputeDeadline = uint64(block.timestamp) + pools[r.classId].terms.disputeWindow;
+        a.status = AssignmentStatus.DeliveryClaimed;
+
+        emit AssignmentDeliveryClaimed(reservationId, assignmentIndex, evidenceHash, a.disputeDeadline);
+    }
+
+    /// @notice Buyer disputes one claimed assignment before its window
+    /// closes, exactly as `CapacityMarket.dispute()` does for a whole
+    /// position. `disputeDeadline` restarts as a second, equal-length
+    /// window; if nothing resolves the dispute before it passes,
+    /// `resolveAssignmentDisputeByTimeout` refunds the buyer — see that
+    /// function's NatSpec and docs/TECHNICAL_README.md "Level 3: delivery
+    /// claims and disputes".
+    function disputeAssignment(uint256 reservationId, uint256 assignmentIndex, bytes32 reasonHash)
+        external
+        reservationInStatus(reservationId, ReservationStatus.Activated)
+    {
+        Reservation storage r = reservations[reservationId];
+        if (msg.sender != r.buyer) revert NotBuyer();
+        Assignment storage a = r.assignments[assignmentIndex];
+        if (a.status != AssignmentStatus.DeliveryClaimed) {
+            revert WrongAssignmentStatus(AssignmentStatus.DeliveryClaimed, a.status);
+        }
+        if (block.timestamp > a.disputeDeadline) revert DisputeWindowClosed();
+
+        a.disputeDeadline = uint64(block.timestamp) + pools[r.classId].terms.disputeWindow;
+        a.status = AssignmentStatus.Disputed;
+        emit AssignmentDisputed(reservationId, assignmentIndex, reasonHash, a.disputeDeadline);
+    }
+
+    /// @notice Anyone may close out one assignment's unresolved dispute once
+    /// its resolution window has passed, refunding the buyer for that
+    /// slice's price and collateral. Mirrors
+    /// `CapacityMarket.resolveDisputeByTimeout()` at the per-assignment
+    /// grain — without it, `Disputed` would be a terminal state with no
+    /// payout path.
+    function resolveAssignmentDisputeByTimeout(uint256 reservationId, uint256 assignmentIndex)
+        external
+        reservationInStatus(reservationId, ReservationStatus.Activated)
+    {
+        Reservation storage r = reservations[reservationId];
+        Assignment storage a = r.assignments[assignmentIndex];
+        if (a.status != AssignmentStatus.Disputed) revert WrongAssignmentStatus(AssignmentStatus.Disputed, a.status);
+        if (block.timestamp <= a.disputeDeadline) revert DisputeWindowOpen();
+
+        a.status = AssignmentStatus.Refunded;
+        emit AssignmentRefunded(reservationId, assignmentIndex, r.buyer);
+
+        _payout(r.buyer, a.price + a.collateral);
+    }
+
+    /// @notice Buyer confirms delivery of one claimed assignment, releasing
     /// that slice's price and collateral to its provider. Settlement is
     /// per-assignment so that one provider's unresolved slice never blocks
     /// payment to another.
@@ -329,7 +413,30 @@ contract CapacityPool {
         Reservation storage r = reservations[reservationId];
         if (msg.sender != r.buyer) revert NotBuyer();
         Assignment storage a = r.assignments[assignmentIndex];
-        if (a.status != AssignmentStatus.Accepted) revert WrongAssignmentStatus(AssignmentStatus.Accepted, a.status);
+        if (a.status != AssignmentStatus.DeliveryClaimed) {
+            revert WrongAssignmentStatus(AssignmentStatus.DeliveryClaimed, a.status);
+        }
+
+        a.status = AssignmentStatus.Settled;
+        emit AssignmentSettled(reservationId, assignmentIndex, a.provider);
+
+        _payout(a.provider, a.price + a.collateral);
+    }
+
+    /// @notice Anyone may pay a provider once their assignment's dispute
+    /// window passed without the buyer disputing or settling — mirrors
+    /// `CapacityMarket.finalizeDelivery()`'s protection against a silent
+    /// buyer, at the per-assignment grain.
+    function finalizeAssignmentDelivery(uint256 reservationId, uint256 assignmentIndex)
+        external
+        reservationInStatus(reservationId, ReservationStatus.Activated)
+    {
+        Reservation storage r = reservations[reservationId];
+        Assignment storage a = r.assignments[assignmentIndex];
+        if (a.status != AssignmentStatus.DeliveryClaimed) {
+            revert WrongAssignmentStatus(AssignmentStatus.DeliveryClaimed, a.status);
+        }
+        if (block.timestamp <= a.disputeDeadline) revert DisputeWindowOpen();
 
         a.status = AssignmentStatus.Settled;
         emit AssignmentSettled(reservationId, assignmentIndex, a.provider);
@@ -372,10 +479,18 @@ contract CapacityPool {
     function assignmentInfo(uint256 reservationId, uint256 index)
         external
         view
-        returns (address provider, uint256 quantity, uint256 price, uint256 collateral, AssignmentStatus status)
+        returns (
+            address provider,
+            uint256 quantity,
+            uint256 price,
+            uint256 collateral,
+            bytes32 deliveryEvidenceHash,
+            uint64 disputeDeadline,
+            AssignmentStatus status
+        )
     {
         Assignment storage a = reservations[reservationId].assignments[index];
-        return (a.provider, a.quantity, a.price, a.collateral, a.status);
+        return (a.provider, a.quantity, a.price, a.collateral, a.deliveryEvidenceHash, a.disputeDeadline, a.status);
     }
 
     // `to` is always `r.buyer` or `a.provider` read from storage at the call

@@ -22,8 +22,11 @@ is a `CapacityPosition`: an onchain asset with ownership, a time window, an
 activation SLA, and collateral — reservable, transferable, activatable, and
 settled exactly once. Level 2 (`CapacityPool.sol`) pools that same shape
 across many providers under a shared `TermsClass`, routing FIFO at
-activation. See [`docs/TECHNICAL_README.md`](docs/TECHNICAL_README.md) for
-both state machines.
+activation. Level 3 adds a hash-committed delivery claim and a bounded
+dispute window in front of settlement, in both contracts, with a timeout
+path on each side so neither a silent buyer nor an unresolved dispute can
+lock funds. See [`docs/TECHNICAL_README.md`](docs/TECHNICAL_README.md) for
+all three state machines.
 
 ## Construction method: destination-driven, not MVP-driven
 
@@ -44,9 +47,19 @@ level to rebuild or bypass it.
   in front of L1-shaped assignments, not a rewrite of Level 1 — see the
   Technical README's "Why a second contract" for why it's a separate file
   rather than a mode flag on `CapacityMarket`.
-- **Level 3 (planned):** an attestation/dispute layer in front of
-  `settle()`/`settleAssignment()`, closing the trust-boundary gap named in
-  the Technical README (today, both are buyer-honesty-based).
+- **Level 3 (current):** a hash-committed delivery claim and bounded dispute
+  window in front of settlement, in both contracts
+  (`claimDelivery`/`claimAssignmentDelivery`, `dispute`/`disputeAssignment`,
+  `finalizeDelivery`/`finalizeAssignmentDelivery`,
+  `resolveDisputeByTimeout`/`resolveAssignmentDisputeByTimeout`). Narrows,
+  but does not close, the trust-boundary gap named in the Technical README:
+  it makes delivery an explicit two-sided claim with no fund-lock path
+  (invariant 8 below), but a dispute's default resolution (refund the
+  buyer) is a declared conservative rule, not adjudication on the merits.
+- **Level 4 (planned):** real dispute adjudication — a designated
+  arbitrator, staked jurors, or an oracle reading the offchain evidence
+  behind `evidenceHash`/`reasonHash` — so a dispute can resolve on its
+  merits before `resolveDisputeByTimeout`'s window would ever need to fire.
 
 Before adding a level, re-read the "Invariants" and "Trust boundary"
 sections of the Technical README and confirm the new level preserves every
@@ -58,9 +71,9 @@ project's construction method requires at each step, not a one-time gate.
 These are restated briefly here as a checklist; the Technical README has
 the mechanism and the test proving each one.
 
-**`CapacityMarket.sol` (Level 1)** — any change touching a state transition
-**must** re-verify all five against the test suite before being considered
-done:
+**`CapacityMarket.sol` (Level 1 + 3)** — any change touching a state
+transition **must** re-verify these against the test suite before being
+considered done:
 
 1. No double reservation (`inStatus` guard on `reserve`).
 2. No double consumption (`inStatus` guard on every mutating function).
@@ -70,28 +83,34 @@ done:
    see "Price on expiry" in the Technical README for exactly which
    recipient gets which, depending on whether the position was ever
    reserved.
-5. State transitions are one-way; `Settled`/`Expired`/`Defaulted` are
-   terminal.
+5. State transitions are one-way; `Settled`/`Expired`/`Defaulted`/`Refunded`
+   are terminal.
+8. **Every terminal state has a payout path.** No position may reach a
+   terminal status that leaves `price`/`collateral` with no function able to
+   move them. This invariant exists because it was violated twice during
+   this project's own construction — see the fund-lock paragraph below.
 
-**`CapacityPool.sol` (Level 2)** adds, at the grain of an `Assignment`
-rather than a whole position, the same four shape-of-invariant guarantees,
-plus the fungibility-specific one named in this project's own design notes:
+**`CapacityPool.sol` (Level 2 + 3)** adds, at the grain of an `Assignment`
+rather than a whole position, the same shape-of-invariant guarantees, plus
+the fungibility-specific one named in this project's own design notes:
 
 6. `reserved + assigned ≤ committed capacity` — `reserve()` checks
    `pool.available` before decrementing it; see the Technical README's
    "Why `activate()` cannot run out of capacity" for the accounting
    identity that must keep holding across `contribute`/`reserve`/`activate`/
    `expireReservation` if this is ever touched.
-7. One assignment's default never affects a sibling assignment in the same
-   reservation — partial fulfillment is a first-class outcome.
+7. One assignment's default, or one assignment's dispute, never affects a
+   sibling assignment in the same reservation — partial fulfillment and
+   partial disagreement are both first-class outcomes.
 
-**Known, accepted gap, not an oversight:** `settle()`/`settleAssignment()`
-only prove the buyer's address called them — not that work was delivered or
-met a bar. This is Level 3's job, not a bug to "fix" in Level 1/2 by adding
-an ad hoc check. Do not add partial/heuristic dispute logic to either
-`settle` function — that's exactly the kind of approximated-depth shortcut
-this project's construction method rejects. Build Level 3 properly or leave
-the gap documented.
+**Known, accepted gap, not an oversight, even after Level 3:**
+`dispute`/`disputeAssignment` only record that the buyer objected, not
+whether the objection is correct. `resolveDisputeByTimeout` always refunds
+the buyer by default — it is a declared conservative rule, not a verdict.
+Real adjudication is Level 4's job, not a bug to "fix" in Level 3 by adding
+a heuristic merits-check — that's exactly the kind of approximated-depth
+shortcut this project's construction method rejects. Build Level 4 properly
+or leave the gap documented.
 
 **Push-payment is a known liveness gap, not a security hole,** in both
 contracts. `_payout` uses `.call` and requires success; a recipient whose
@@ -100,21 +119,33 @@ counterparty's. Don't "fix" this with a try/catch that silently drops a
 failed payout — that would turn a liveness gap into a fund-loss bug. The
 real fix is a withdrawal-pattern ledger, planned, not yet built.
 
-**A fund-lock bug was already caught and fixed once in this project, by
+**A fund-lock bug was already caught and fixed TWICE in this project, by
 adversarial self-review rather than by a test — read this before touching
-any payout path.** The first draft of `CapacityMarket.expire()` paid out
-`collateral` only, dropping `price` for a reserved-then-lapsed position: ETH
-the buyer had already paid had no function left that could ever move it.
-The equivalent gap existed in `CapacityPool.expireReservation()` and in the
-total absence of a way to reclaim a contribution's locked collateral after
-its window closed (`withdrawContribution` didn't exist yet). **When adding
-or changing any function that holds ETH in this contract, explicitly trace
-every value the function received (`price`, `collateral`, both) to a
-function that can pay it back out, for every status the position/
-reservation/contribution can reach — including the ones nobody asked about,
-like "never reserved" or "reserved but never activated."** A test suite
-only catches a wrong payout; it does not catch a payout path that was never
-written, because there's nothing for the missing function to fail.
+any payout path or adding any new terminal status.** First: the original
+`CapacityMarket.expire()` paid out `collateral` only, dropping `price` for a
+reserved-then-lapsed position — ETH the buyer had already paid had no
+function left that could ever move it. The equivalent gap existed in
+`CapacityPool.expireReservation()` and in the total absence of a way to
+reclaim a contribution's locked collateral after its window closed
+(`withdrawContribution` didn't exist yet). Second, while building Level 3:
+the first version of `dispute()`/`disputeAssignment()` made `Disputed` a
+true terminal state with **no function at all** that could pay out
+`price`/`collateral` from it — the identical defect class, reached through a
+brand-new state this time instead of an existing one. Fixed by
+`resolveDisputeByTimeout`/`resolveAssignmentDisputeByTimeout` (see the
+Technical README's "Level 3" section for why the default is a refund, not a
+payment to the provider).
+
+**The lesson, stated as a rule now (invariant 8 above): when adding any new
+status — not just when changing an existing payout function — explicitly
+name the function that pays out `price`/`collateral` from it, in the same
+change that adds the status.** A test suite only catches a wrong payout; it
+does not catch a payout path that was never written, because there's
+nothing for the missing function to fail. "This status is terminal because
+resolving it further is out of scope" is a legitimate design choice
+(Level 4's adjudication, for instance) — "this status is terminal and funds
+just stay here" is never one, regardless of how well-justified the state
+itself is.
 
 ## Numbers that are decisions, not defaults
 
@@ -136,6 +167,11 @@ written, because there's nothing for the missing function to fail.
   in Level 2. A known, accepted gas-griefing surface on `activate()`'s FIFO
   walk (see Technical README) — not yet worth the complexity of a floor or
   a batched-consumption bound at this level's expected liquidity.
+- `disputeWindow` (Level 3) is reused, unmodified, as the length of both the
+  buyer's initial response window (after `claimDelivery`) and the
+  arbitration-timeout window (after `dispute`). Deliberate simplification —
+  one configured duration instead of two — not a sign the two windows must
+  always be equal; revisit if a level ever needs them to differ.
 
 ## Build & test
 
@@ -145,8 +181,8 @@ forge test
 ```
 
 A green `forge test` run proves the invariants listed above hold under the
-scenarios in `test/CapacityMarket.t.sol` (17 tests) and
-`test/CapacityPool.t.sol` (23 tests) — 40 total. It is not a security audit
+scenarios in `test/CapacityMarket.t.sol` (28 tests) and
+`test/CapacityPool.t.sol` (32 tests) — 60 total. It is not a security audit
 and does not cover fuzzing, formal verification, or interaction between the
 two contracts (they don't currently call each other, but a future level
 that connects them needs its own test coverage, not an assumption that
@@ -188,6 +224,9 @@ SPDX tags as if they were placeholders left by mistake.
 - [ ] Every value a changed/new function receives (`price`, `collateral`)
       is traceable to a payout function for every status the asset can
       reach — including states nobody explicitly asked about.
+- [ ] Any new status added is either non-terminal, or terminal with a named
+      function that pays out `price`/`collateral` from it in the same
+      change that adds it (invariant 8).
 - [ ] If a new state or transition was added, the Technical README's state
       machine diagram and invariant list were updated in the same change.
 - [ ] No MVP/quick-version scope was introduced for a load-bearing property.

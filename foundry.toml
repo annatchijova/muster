@@ -2,5 +2,10 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+# CapacityPosition/Assignment structs are wide enough (Level 3's delivery-
+# claim fields pushed them over) that the public struct getter hits
+# "stack too deep" under the legacy codegen. via_ir avoids restructuring
+# the structs or the getters just to dodge a compiler limitation.
+via_ir = true
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

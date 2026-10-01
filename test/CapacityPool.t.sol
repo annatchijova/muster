@@ -16,6 +16,9 @@ contract CapacityPoolTest is Test {
     uint256 constant PRICE_PER_UNIT = 1 ether;
     uint256 constant COLLATERAL_PER_UNIT = 0.25 ether;
     uint64 constant SLA = 30 minutes;
+    uint64 constant DISPUTE_WINDOW = 2 days;
+    bytes32 constant EVIDENCE_HASH = keccak256("incident report #1");
+    bytes32 constant REASON_HASH = keccak256("work did not match the incident report");
 
     CapacityPool.TermsClass terms;
     bytes32 classId;
@@ -26,6 +29,7 @@ contract CapacityPoolTest is Test {
             validFrom: uint64(block.timestamp),
             validUntil: uint64(block.timestamp + 30 days),
             activationSLA: SLA,
+            disputeWindow: DISPUTE_WINDOW,
             pricePerUnit: PRICE_PER_UNIT,
             collateralPerUnit: COLLATERAL_PER_UNIT
         });
@@ -56,6 +60,42 @@ contract CapacityPoolTest is Test {
     function _reserve(address who, uint256 quantity) internal returns (uint256 reservationId) {
         vm.prank(who);
         reservationId = pool.reserve{value: PRICE_PER_UNIT * quantity}(classId, quantity);
+    }
+
+    function _assignmentStatus(uint256 reservationId, uint256 index)
+        internal
+        view
+        returns (CapacityPool.AssignmentStatus status)
+    {
+        (,,,,,, status) = pool.assignmentInfo(reservationId, index);
+    }
+
+    function _assignmentProvider(uint256 reservationId, uint256 index) internal view returns (address provider) {
+        (provider,,,,,,) = pool.assignmentInfo(reservationId, index);
+    }
+
+    function _assignmentQuantity(uint256 reservationId, uint256 index) internal view returns (uint256 quantity) {
+        (, quantity,,,,,) = pool.assignmentInfo(reservationId, index);
+    }
+
+    function _throughAcceptedAssignment(uint256 quantity, address provider)
+        internal
+        returns (uint256 reservationId)
+    {
+        reservationId = _reserve(buyer, quantity);
+        vm.prank(buyer);
+        pool.activate(reservationId);
+        vm.prank(provider);
+        pool.acceptAssignment(reservationId, 0);
+    }
+
+    function _throughDeliveryClaimedAssignment(uint256 quantity, address provider)
+        internal
+        returns (uint256 reservationId)
+    {
+        reservationId = _throughAcceptedAssignment(quantity, provider);
+        vm.prank(provider);
+        pool.claimAssignmentDelivery(reservationId, 0, EVIDENCE_HASH);
     }
 
     // --- Fungibility: pooled capacity, no provider chosen at reserve time ---
@@ -127,11 +167,9 @@ contract CapacityPoolTest is Test {
         (,,,,, uint256 assignmentCount) = pool.reservationInfo(reservationId);
         assertEq(assignmentCount, 1);
 
-        (address provider, uint256 quantity,,, CapacityPool.AssignmentStatus status) =
-            pool.assignmentInfo(reservationId, 0);
-        assertEq(provider, providerA);
-        assertEq(quantity, 4);
-        assertEq(uint8(status), uint8(CapacityPool.AssignmentStatus.Pending));
+        assertEq(_assignmentProvider(reservationId, 0), providerA);
+        assertEq(_assignmentQuantity(reservationId, 0), 4);
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Pending));
     }
 
     function test_activate_splits_across_providers_when_order_exceeds_one() public {
@@ -144,13 +182,10 @@ contract CapacityPoolTest is Test {
         (,,,,, uint256 assignmentCount) = pool.reservationInfo(reservationId);
         assertEq(assignmentCount, 2);
 
-        (address p0, uint256 q0,,,) = pool.assignmentInfo(reservationId, 0);
-        (address p1, uint256 q1,,,) = pool.assignmentInfo(reservationId, 1);
-
-        assertEq(p0, providerA);
-        assertEq(q0, 8);
-        assertEq(p1, providerB);
-        assertEq(q1, 2);
+        assertEq(_assignmentProvider(reservationId, 0), providerA);
+        assertEq(_assignmentQuantity(reservationId, 0), 8);
+        assertEq(_assignmentProvider(reservationId, 1), providerB);
+        assertEq(_assignmentQuantity(reservationId, 1), 2);
     }
 
     function test_second_reservation_continues_fifo_from_where_first_left_off() public {
@@ -164,38 +199,42 @@ contract CapacityPoolTest is Test {
         vm.prank(otherBuyer);
         pool.activate(res2);
 
-        (address provider,,,,) = pool.assignmentInfo(res2, 0);
-        assertEq(provider, providerB);
+        assertEq(_assignmentProvider(res2, 0), providerB);
     }
 
     // --- Per-assignment lifecycle mirrors CapacityMarket's single-position one ---
 
-    function test_accept_and_settle_assignment_pays_provider() public {
+    function test_accept_claim_and_settle_assignment_pays_provider() public {
         _seedThreeProviders();
-        uint256 reservationId = _reserve(buyer, 4);
-        vm.prank(buyer);
-        pool.activate(reservationId);
-
-        vm.prank(providerA);
-        pool.acceptAssignment(reservationId, 0);
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
 
         uint256 providerBalanceBefore = providerA.balance;
 
         vm.prank(buyer);
         pool.settleAssignment(reservationId, 0);
 
-        (,,,, CapacityPool.AssignmentStatus status) = pool.assignmentInfo(reservationId, 0);
-        assertEq(uint8(status), uint8(CapacityPool.AssignmentStatus.Settled));
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Settled));
         assertEq(providerA.balance, providerBalanceBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
+    }
+
+    function test_settle_before_claimAssignmentDelivery_reverts() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughAcceptedAssignment(4, providerA);
+
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityPool.WrongAssignmentStatus.selector,
+                CapacityPool.AssignmentStatus.DeliveryClaimed,
+                CapacityPool.AssignmentStatus.Accepted
+            )
+        );
+        pool.settleAssignment(reservationId, 0);
     }
 
     function test_settle_twice_reverts() public {
         _seedThreeProviders();
-        uint256 reservationId = _reserve(buyer, 4);
-        vm.prank(buyer);
-        pool.activate(reservationId);
-        vm.prank(providerA);
-        pool.acceptAssignment(reservationId, 0);
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
         vm.prank(buyer);
         pool.settleAssignment(reservationId, 0);
 
@@ -203,7 +242,7 @@ contract CapacityPoolTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 CapacityPool.WrongAssignmentStatus.selector,
-                CapacityPool.AssignmentStatus.Accepted,
+                CapacityPool.AssignmentStatus.DeliveryClaimed,
                 CapacityPool.AssignmentStatus.Settled
             )
         );
@@ -227,15 +266,15 @@ contract CapacityPoolTest is Test {
         uint256 buyerBalanceBefore = buyer.balance;
         pool.claimAssignmentDefault(reservationId, 1);
 
-        (,,,, CapacityPool.AssignmentStatus statusB) = pool.assignmentInfo(reservationId, 1);
-        assertEq(uint8(statusB), uint8(CapacityPool.AssignmentStatus.Defaulted));
+        assertEq(uint8(_assignmentStatus(reservationId, 1)), uint8(CapacityPool.AssignmentStatus.Defaulted));
         assertEq(buyer.balance, buyerBalanceBefore + COLLATERAL_PER_UNIT * 2);
 
         // Assignment 0 (provider A, already accepted) is untouched and still settleable.
+        vm.prank(providerA);
+        pool.claimAssignmentDelivery(reservationId, 0, EVIDENCE_HASH);
         vm.prank(buyer);
         pool.settleAssignment(reservationId, 0);
-        (,,,, CapacityPool.AssignmentStatus statusA) = pool.assignmentInfo(reservationId, 0);
-        assertEq(uint8(statusA), uint8(CapacityPool.AssignmentStatus.Settled));
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Settled));
     }
 
     function test_claimAssignmentDefault_before_deadline_reverts() public {
@@ -257,6 +296,128 @@ contract CapacityPoolTest is Test {
         vm.prank(providerB);
         vm.expectRevert(CapacityPool.NotProvider.selector);
         pool.acceptAssignment(reservationId, 0);
+    }
+
+    // --- Level 3: delivery claims and disputes, per assignment --------------
+
+    function test_claimAssignmentDelivery_by_non_provider_reverts() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughAcceptedAssignment(4, providerA);
+
+        vm.prank(providerB);
+        vm.expectRevert(CapacityPool.NotProvider.selector);
+        pool.claimAssignmentDelivery(reservationId, 0, EVIDENCE_HASH);
+    }
+
+    function test_disputeAssignment_within_window_blocks_settlement_and_finalization() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+
+        vm.prank(buyer);
+        pool.disputeAssignment(reservationId, 0, REASON_HASH);
+
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Disputed));
+
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityPool.WrongAssignmentStatus.selector,
+                CapacityPool.AssignmentStatus.DeliveryClaimed,
+                CapacityPool.AssignmentStatus.Disputed
+            )
+        );
+        pool.settleAssignment(reservationId, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CapacityPool.WrongAssignmentStatus.selector,
+                CapacityPool.AssignmentStatus.DeliveryClaimed,
+                CapacityPool.AssignmentStatus.Disputed
+            )
+        );
+        pool.finalizeAssignmentDelivery(reservationId, 0);
+    }
+
+    function test_disputeAssignment_by_non_buyer_reverts() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+
+        vm.prank(otherBuyer);
+        vm.expectRevert(CapacityPool.NotBuyer.selector);
+        pool.disputeAssignment(reservationId, 0, REASON_HASH);
+    }
+
+    function test_finalizeAssignmentDelivery_before_window_closes_reverts() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+
+        vm.expectRevert(CapacityPool.DisputeWindowOpen.selector);
+        pool.finalizeAssignmentDelivery(reservationId, 0);
+    }
+
+    function test_finalizeAssignmentDelivery_pays_provider_after_silent_buyer() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        uint256 providerBalanceBefore = providerA.balance;
+        pool.finalizeAssignmentDelivery(reservationId, 0); // callable by anyone
+
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Settled));
+        assertEq(providerA.balance, providerBalanceBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
+    }
+
+    function test_one_assignment_dispute_does_not_block_sibling_finalization() public {
+        _seedThreeProviders(); // A:8 B:4 C:12
+        uint256 reservationId = _reserve(buyer, 10); // A:8 (idx 0), B:2 (idx 1)
+        vm.prank(buyer);
+        pool.activate(reservationId);
+
+        vm.prank(providerA);
+        pool.acceptAssignment(reservationId, 0);
+        vm.prank(providerB);
+        pool.acceptAssignment(reservationId, 1);
+
+        vm.prank(providerA);
+        pool.claimAssignmentDelivery(reservationId, 0, EVIDENCE_HASH);
+        vm.prank(providerB);
+        pool.claimAssignmentDelivery(reservationId, 1, EVIDENCE_HASH);
+
+        vm.prank(buyer);
+        pool.disputeAssignment(reservationId, 0, REASON_HASH); // buyer disputes A's slice only
+
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        // B's slice was never disputed: it finalizes normally.
+        pool.finalizeAssignmentDelivery(reservationId, 1);
+        assertEq(uint8(_assignmentStatus(reservationId, 1)), uint8(CapacityPool.AssignmentStatus.Settled));
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Disputed));
+    }
+
+    function test_resolveAssignmentDisputeByTimeout_before_window_reverts() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+        vm.prank(buyer);
+        pool.disputeAssignment(reservationId, 0, REASON_HASH);
+
+        vm.expectRevert(CapacityPool.DisputeWindowOpen.selector);
+        pool.resolveAssignmentDisputeByTimeout(reservationId, 0);
+    }
+
+    function test_resolveAssignmentDisputeByTimeout_refunds_buyer_after_window() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+        vm.prank(buyer);
+        pool.disputeAssignment(reservationId, 0, REASON_HASH);
+
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        uint256 buyerBalanceBefore = buyer.balance;
+        pool.resolveAssignmentDisputeByTimeout(reservationId, 0); // callable by anyone
+
+        assertEq(uint8(_assignmentStatus(reservationId, 0)), uint8(CapacityPool.AssignmentStatus.Refunded));
+        assertEq(buyer.balance, buyerBalanceBefore + PRICE_PER_UNIT * 4 + COLLATERAL_PER_UNIT * 4);
     }
 
     // --- Transfer and expiration mirror CapacityMarket's semantics ----------

@@ -17,24 +17,42 @@ pragma solidity ^0.8.24;
 ///      `collateral` are immutable after listing. Transfer changes `buyer`
 ///      only.
 ///   4. Collateral is locked at listing and released exactly once, either to
-///      the provider at `settle` or to the buyer at `claimDefault`.
+///      the provider at `settle`/`finalizeDelivery` or to the buyer at
+///      `claimDefault`.
 ///   5. State transitions are one-way. There is no path back to an earlier
 ///      state, so a stale reference to a position's status is never wrong
 ///      about what remains possible from here.
 ///
-/// What this contract does NOT and cannot guarantee: that the provider was
-/// actually available, or that the delivered work met the buyer's bar. Those
-/// require an offchain attestation/dispute process layered on top of
-/// `settle`/`claimDefault` — see docs/TECHNICAL_README.md "Trust boundary".
+/// Level 3 addition: delivery is no longer a single buyer-honesty call.
+/// `settle` requires the provider to have first `claimDelivery`'d with an
+/// evidence hash and the buyer's dispute window to have not been used to
+/// `dispute` it. If the buyer never responds, `finalizeDelivery` lets
+/// anyone pay the provider once the window passes — closing the matching
+/// liveness gap this introduces (an unresponsive buyer could otherwise
+/// lock the provider's price and collateral in `DeliveryClaimed` forever).
+///
+/// What this contract does NOT and cannot guarantee, even with Level 3:
+/// that the evidence hash corresponds to work that actually met the
+/// buyer's bar, or how a genuine dispute gets resolved on its merits once
+/// raised — `dispute` only records that one was raised. What it does
+/// guarantee is that a dispute cannot lock funds forever: absent an actual
+/// resolution mechanism (not built at this level), `resolveDisputeByTimeout`
+/// refunds the buyer after a second window passes, so `Disputed` always has
+/// a payout path even though it has no adjudication. See
+/// docs/TECHNICAL_README.md "Trust boundary" and "Level 3: delivery claims
+/// and disputes".
 contract CapacityMarket {
     enum Status {
         Listed,
         Reserved,
         Activated,
         Accepted,
+        DeliveryClaimed,
+        Disputed,
         Settled,
         Expired,
-        Defaulted
+        Defaulted,
+        Refunded
     }
 
     struct CapacityPosition {
@@ -43,11 +61,14 @@ contract CapacityMarket {
         uint64 validFrom;
         uint64 validUntil;
         uint64 activationSLA;
+        uint64 disputeWindow;
         address provider;
         address buyer;
         uint256 price;
         uint256 collateral;
         uint64 activationDeadline;
+        uint64 disputeDeadline;
+        bytes32 deliveryEvidenceHash;
         Status status;
     }
 
@@ -69,7 +90,10 @@ contract CapacityMarket {
     event Transferred(uint256 indexed positionId, address indexed from, address indexed to);
     event Activated(uint256 indexed positionId, uint64 activationDeadline);
     event Accepted(uint256 indexed positionId);
+    event DeliveryClaimed(uint256 indexed positionId, bytes32 evidenceHash, uint64 disputeDeadline);
+    event Disputed(uint256 indexed positionId, bytes32 reasonHash, uint64 resolutionDeadline);
     event Settled(uint256 indexed positionId);
+    event Refunded(uint256 indexed positionId);
     event Expired(uint256 indexed positionId);
     event Defaulted(uint256 indexed positionId);
 
@@ -83,6 +107,8 @@ contract CapacityMarket {
     error DeadlineNotPassed();
     error DeadlinePassed();
     error InvalidWindow();
+    error DisputeWindowOpen();
+    error DisputeWindowClosed();
 
     modifier inStatus(uint256 positionId, Status expected) {
         Status actual = positions[positionId].status;
@@ -90,13 +116,17 @@ contract CapacityMarket {
         _;
     }
 
-    /// @notice Provider lists capacity, posting `collateral` as a bond against default.
+    /// @notice Provider lists capacity, posting `collateral` as a bond against
+    /// default. `disputeWindow` is how long the buyer has, after the provider
+    /// claims delivery, to dispute it before `finalizeDelivery` can pay the
+    /// provider unilaterally.
     function listCapacity(
         bytes32 domain,
         uint256 quantity,
         uint64 validFrom,
         uint64 validUntil,
         uint64 activationSLA,
+        uint64 disputeWindow,
         uint256 price
     ) external payable returns (uint256 positionId) {
         if (validUntil <= validFrom) revert InvalidWindow();
@@ -109,11 +139,14 @@ contract CapacityMarket {
             validFrom: validFrom,
             validUntil: validUntil,
             activationSLA: activationSLA,
+            disputeWindow: disputeWindow,
             provider: msg.sender,
             buyer: address(0),
             price: price,
             collateral: msg.value,
             activationDeadline: 0,
+            disputeDeadline: 0,
+            deliveryEvidenceHash: bytes32(0),
             status: Status.Listed
         });
 
@@ -204,11 +237,84 @@ contract CapacityMarket {
         _payout(p.buyer, p.collateral);
     }
 
-    /// @notice Buyer confirms delivery. Price and collateral both release to
-    /// the provider; this is the only path that pays the provider the price.
-    function settle(uint256 positionId) external inStatus(positionId, Status.Accepted) {
+    /// @notice Provider claims delivery is complete, committing to
+    /// `evidenceHash` (a hash of whatever offchain evidence backs the claim
+    /// — a report, logs, a signed timesheet; the contract does not interpret
+    /// it) and starting the buyer's dispute window.
+    function claimDelivery(uint256 positionId, bytes32 evidenceHash) external inStatus(positionId, Status.Accepted) {
+        CapacityPosition storage p = positions[positionId];
+        if (msg.sender != p.provider) revert NotProvider();
+
+        p.deliveryEvidenceHash = evidenceHash;
+        p.disputeDeadline = uint64(block.timestamp) + p.disputeWindow;
+        p.status = Status.DeliveryClaimed;
+
+        emit DeliveryClaimed(positionId, evidenceHash, p.disputeDeadline);
+    }
+
+    /// @notice Buyer disputes a claimed delivery before the window closes.
+    /// `reasonHash` is committed the same way `evidenceHash` is — this
+    /// records that a dispute exists and why, in the buyer's own words; it
+    /// does not adjudicate it. This contract has no arbitrator and does not
+    /// invent one: `disputeDeadline` is reused as a second, equally long
+    /// window (restarted from the dispute itself) during which an actual
+    /// resolution mechanism — not built at this level — could settle the
+    /// claim on its merits. If nothing resolves it before that window
+    /// passes, `resolveDisputeByTimeout` pays the **buyer**, not the
+    /// provider: a disputed claim does not get the silent-party benefit of
+    /// the doubt `finalizeDelivery` gives an un-disputed one. This is a
+    /// conservative, declared default, not a verdict on the merits — see
+    /// docs/TECHNICAL_README.md "Level 3: delivery claims and disputes".
+    function dispute(uint256 positionId, bytes32 reasonHash) external inStatus(positionId, Status.DeliveryClaimed) {
         CapacityPosition storage p = positions[positionId];
         if (msg.sender != p.buyer) revert NotBuyer();
+        if (block.timestamp > p.disputeDeadline) revert DisputeWindowClosed();
+
+        p.disputeDeadline = uint64(block.timestamp) + p.disputeWindow;
+        p.status = Status.Disputed;
+        emit Disputed(positionId, reasonHash, p.disputeDeadline);
+    }
+
+    /// @notice Anyone may close out an unresolved dispute once its
+    /// resolution window has passed, refunding the buyer. Without this,
+    /// `Disputed` would be a terminal state with no payout path at all —
+    /// the exact fund-lock class this project already fixed once on
+    /// `expire()` (see AGENTS.md's construction-method notes) — just
+    /// reached by a different route.
+    function resolveDisputeByTimeout(uint256 positionId) external inStatus(positionId, Status.Disputed) {
+        CapacityPosition storage p = positions[positionId];
+        if (block.timestamp <= p.disputeDeadline) revert DisputeWindowOpen();
+
+        p.status = Status.Refunded;
+        emit Refunded(positionId);
+
+        _payout(p.buyer, p.price + p.collateral);
+    }
+
+    /// @notice Buyer confirms delivery before disputing it (or before the
+    /// window even requires a decision). Price and collateral both release
+    /// to the provider; this and `finalizeDelivery` are the only paths that
+    /// pay the provider the price.
+    function settle(uint256 positionId) external inStatus(positionId, Status.DeliveryClaimed) {
+        CapacityPosition storage p = positions[positionId];
+        if (msg.sender != p.buyer) revert NotBuyer();
+
+        p.status = Status.Settled;
+        emit Settled(positionId);
+
+        _payout(p.provider, p.price + p.collateral);
+    }
+
+    /// @notice Anyone may pay the provider once the dispute window has
+    /// passed without the buyer disputing or settling. Without this, an
+    /// unresponsive or bad-faith buyer could leave a provider's price and
+    /// collateral locked in `DeliveryClaimed` indefinitely — the same
+    /// class of liveness gap `claimDefault` already closes on the
+    /// provider's side of `Activated`, mirrored here for the buyer's side
+    /// of `DeliveryClaimed`.
+    function finalizeDelivery(uint256 positionId) external inStatus(positionId, Status.DeliveryClaimed) {
+        CapacityPosition storage p = positions[positionId];
+        if (block.timestamp <= p.disputeDeadline) revert DisputeWindowOpen();
 
         p.status = Status.Settled;
         emit Settled(positionId);
