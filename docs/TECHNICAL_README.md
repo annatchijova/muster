@@ -17,22 +17,20 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 
 80/80 tests passing total (including `test/RedTeam.t.sol`'s 6-test
 regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three confirmed
-and fixed findings). A first deploy went to Monad testnet (chain id 10143)
-on 2026-10-01; a same-day red-team pass found and fixed three
-vulnerabilities in the source *after* that deploy, so it was redeployed the
-same day. Patched contracts (pre-Level-4), exercised end-to-end live:
-`CapacityMarket` at `0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f`,
-`CapacityPool` at `0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F` — see
-`README.md`'s "Live on Monad testnet" for the transactions. **Level 4 has
-not been deployed yet** — `arbitrator` is a new field on both
-`CapacityPosition` and `TermsClass`, so it changes the ABI; the two
-addresses above predate it. The original pre-audit addresses (`0xb859aF02…`,
-`0x555C4340…`) still run the vulnerable bytecode and are kept live and
-verified as part of the audit trail, not for reuse. Not independently
-audited beyond this project's own red-team pass. Not deployed to mainnet.
+and fixed findings). Three generations of deploy to Monad testnet (chain id
+10143), all kept live and verified as this project's own audit trail — see
+`README.md`'s "Live on Monad testnet" for every address and which is
+current. Current (Level 4): `CapacityMarket` at
+`0x1224950b84a86f57cB4AE838D372879960862896`, `CapacityPool` at
+`0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` — **not yet exercised live**,
+only in Foundry. The prior (pre-Level-4, patched) pair was exercised
+end-to-end with real MON before Level 4 made its ABI stale; the original
+pair before that is the still-vulnerable pre-audit deploy. Not
+independently audited beyond this project's own red-team pass. Not
+deployed to mainnet.
 
-**What "deployed" means here, now that it's been exercised:** the current
-contracts were run end-to-end on the live testnet — `listCapacity` →
+**What "deployed" means here, for the pre-Level-4 pair that was actually
+exercised:** those contracts were run end-to-end on the live testnet — `listCapacity` →
 `reserve` → `activate` → `acceptActivation` → `claimDelivery` → `settle` on
 `CapacityMarket`, and `contribute` → `reserve` → `activate` →
 `acceptAssignment` → `claimAssignmentDelivery` → `settleAssignment` on

@@ -122,10 +122,8 @@ README.
 - 80/80 tests passing (`test/`), covering all four levels' lifecycles,
   every invariant violation, and a permanent regression suite for the
   red-team findings below.
-- Live on Monad testnet with the **patched, pre-Level-4** bytecode (see
-  "Live on Monad testnet" below) — Level 4 added `arbitrator` to both
-  contracts' public state, changing the ABI, so the deployed addresses
-  predate it until redeployed.
+- Live on Monad testnet with the current Level 4 bytecode (see "Live on
+  Monad testnet" below).
 
 ```bash
 forge build
@@ -134,33 +132,27 @@ forge test
 
 ## Live on Monad testnet
 
-Redeployed 2026-10-01 after the red-team pass below fixed three
-vulnerabilities found in the first deploy; these are the current,
-Sourcify-verified (`exact_match`), fixed contracts:
+Redeployed 2026-10-01 after adding Level 4 (`arbitrator` is new public
+state, so it changed the ABI from the prior deploy). Current,
+Sourcify-verified (`exact_match`) contracts:
 
 | Contract | Address |
 |---|---|
-| `CapacityMarket` | `0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f` |
-| `CapacityPool` | `0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F` |
+| `CapacityMarket` | `0x1224950b84a86f57cB4AE838D372879960862896` |
+| `CapacityPool` | `0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` |
 
-Both were exercised end-to-end on testnet, not just in local tests: list →
-reserve → activate → accept → claim delivery → settle, real transactions,
-real MON. Provider collected exactly `price + collateral` in both cases
-(`0.07 MON` on `CapacityMarket`, `0.03 MON` on `CapacityPool`), and the
-contract's balance returned to `0` after settlement — live confirmation
-that F1's fix (the default path losing `price` forever) didn't just pass in
-Foundry, it behaves correctly against a real chain. Representative
-transaction hashes: `listCapacity` 0x2ef9c44c…ed23b, `claimDelivery`
-0xeb6f1522…d709, `settle` 0xddf84f28…dd99 (`CapacityMarket`); `contribute`
-0xefd50828…db13, `settleAssignment` 0xdf771375…da51 (`CapacityPool`) — look
-any of these up on a Monad testnet explorer for the full trace.
+**Earlier deploys, kept live and verified as this project's audit trail —
+do not send value to any of them:**
 
-The original 2026-10-01 deploy (`CapacityMarket`
-`0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c`, `CapacityPool`
-`0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3`) still runs the **vulnerable**
-bytecode from before the red-team fixes — left live and verified
-deliberately, as part of this project's own audit trail, not reused for
-anything. Do not send value to it.
+| Contract | Address | Why it's stale |
+|---|---|---|
+| `CapacityMarket` | `0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f` | Pre-Level-4: patched (F1/F2/F3), exercised end-to-end live — list → reserve → activate → accept → claim delivery → settle, real MON. Provider collected exactly `price + collateral` (`0.07 MON`), contract balance returned to `0`. Representative tx hashes: `listCapacity` 0x2ef9c44c…ed23b, `claimDelivery` 0xeb6f1522…d709, `settle` 0xddf84f28…dd99. |
+| `CapacityPool` | `0x7d59c7CB9579dF0122a6bbB45b19796a91F2D32F` | Same pre-Level-4 patched version, same live exercise (`contribute` 0xefd50828…db13, `settleAssignment` 0xdf771375…da51, `0.03 MON` collected). |
+| `CapacityMarket` | `0xb859aF025b8676A5BFFFab6Ec013aBf131f7581c` | **Vulnerable** — the original pre-audit deploy, still has F1/F2/F3. |
+| `CapacityPool` | `0x555C4340DA92b6579E26000b2CcAe9a2Ce5810e3` | Same, vulnerable. |
+
+The Level 4 contracts above have not yet been exercised live the way the
+pre-Level-4 deploy was — only locally, in Foundry.
 
 ## Deploying to Monad testnet
 
