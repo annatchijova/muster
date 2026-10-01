@@ -1,0 +1,7 @@
+{
+  "schedule": "0 */5 * * * *",
+  "chainSelectorName": "monad-testnet",
+  "marketAddress": "0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364",
+  "poolAddress": "0x44f305fbCF56acECe8f79Cd9773351E68634B0D5",
+  "receiverAddress": "0xD8979A669b360cb02c8bAC95065669f609aFA5b0"
+}

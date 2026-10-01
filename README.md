@@ -126,20 +126,32 @@ README.
 `finalizeDelivery`, `resolveDisputeByTimeout`, and their `CapacityPool`
 equivalents) are deliberately permissionless — anyone can call them once
 their deadline passes — but nothing did so automatically until now.
-`src/CREDeadlineReceiver.sol` is the onchain half of a Chainlink CRE
+`src/CREDeadlineReceiver.sol` is the onchain half of a real Chainlink CRE
 integration: a closed dispatcher (six named actions against two immutable
 contract addresses, no arbitrary-calldata forwarding) that Chainlink's
 DON-operated Forwarder calls once it reaches consensus on a report. The
-offchain half (the actual workflow) is next, pending an authenticated CRE
-login.
+offchain half — `muster-cre/deadline-keeper`, a cron-triggered workflow
+that reads every position's status/deadline and submits a report once one
+is due — is built and was run live: a real position with a 45-second SLA
+was listed, reserved, and activated on `CapacityMarket`, and once the
+deadline passed, the workflow found it, submitted a report, and
+`CapacityMarket` emitted `Defaulted` — fully automatic, no one calling
+`claimDefault` by hand. See "Live on Monad testnet" below for the receiver
+addresses and docs/TECHNICAL_README.md for the one real wrinkle this
+surfaced (local simulation uses a different Forwarder than production —
+caught, diagnosed, and worked around with a second receiver instance, not
+hidden).
 
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
-  `src/CapacityPool.sol`, `src/CREDeadlineReceiver.sol`).
-- 98/98 tests passing (`test/`), covering all five levels' lifecycles,
+  `src/CapacityPool.sol`, `src/CREDeadlineReceiver.sol`), plus the
+  `muster-cre/` Chainlink CRE workflow project (TypeScript).
+- 100/100 Solidity tests passing (`test/`) plus 5/5 CRE workflow tests
+  (`muster-cre/deadline-keeper`), covering all five levels' lifecycles,
   every invariant violation, the CRE receiver's dispatch logic, and a
   permanent regression suite for the red-team findings below.
-- Live on Monad testnet with the current Level 5 bytecode (see "Live on
-  Monad testnet" below).
+- Live on Monad testnet with the current Level 5 bytecode, exercised
+  end-to-end including the CRE-automated default path (see "Live on Monad
+  testnet" below).
 
 ```bash
 forge build
@@ -157,7 +169,17 @@ again). Current, Sourcify-verified (`exact_match`) contracts:
 | `CapacityMarket` | `0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364` |
 | `CapacityPool` | `0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` |
 
-Not yet exercised live — only in Foundry so far.
+**Exercised live**: a position was listed/reserved/activated with a
+45-second SLA, then automatically defaulted by the CRE workflow once it
+lapsed — `Defaulted` event, position status confirmed onchain afterward.
+
+**`CREDeadlineReceiver` instances** (Sourcify-verified, `match`/partial —
+expected with baked-in immutable constructor values, not a red flag):
+
+| Role | Address | Trusts |
+|---|---|---|
+| Production | `0x544e73b2478B45c46b11E86dFaF07065F596fd05` | Real Monad testnet `KeystoneForwarder` |
+| Mock-forwarder staging | `0xD8979A669b360cb02c8bAC95065669f609aFA5b0` | Mock `KeystoneForwarder` — what local `cre workflow simulate --broadcast` actually talks to |
 
 **Earlier deploys, kept live and verified as this project's audit trail —
 do not send value to any of them:**

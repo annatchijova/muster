@@ -4,7 +4,9 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {CapacityMarket} from "../src/CapacityMarket.sol";
 import {CapacityPool} from "../src/CapacityPool.sol";
-import {CREDeadlineReceiver, IReceiver} from "../src/CREDeadlineReceiver.sol";
+import {CREDeadlineReceiver} from "../src/CREDeadlineReceiver.sol";
+import {IReceiver} from "../src/cre/IReceiver.sol";
+import {ReceiverTemplate} from "../src/cre/ReceiverTemplate.sol";
 
 contract CREDeadlineReceiverTest is Test {
     CapacityMarket market;
@@ -65,7 +67,7 @@ contract CREDeadlineReceiverTest is Test {
         bytes memory report = _encodeSingle(CREDeadlineReceiver.Action.MarketClaimDefault, positionId, 0);
 
         vm.prank(buyer); // not the forwarder
-        vm.expectRevert(CREDeadlineReceiver.NotForwarder.selector);
+        vm.expectRevert(abi.encodeWithSelector(ReceiverTemplate.InvalidSender.selector, buyer, forwarder));
         receiver.onReport("", report);
     }
 
@@ -175,5 +177,33 @@ contract CREDeadlineReceiverTest is Test {
         CREDeadlineReceiver.DeadlineAction[] memory actions = new CREDeadlineReceiver.DeadlineAction[](0);
         vm.prank(forwarder);
         receiver.onReport("", abi.encode(actions)); // must not revert
+    }
+
+    // --- Inherited from ReceiverTemplate: the forwarder is rotatable -----
+    // Not reimplemented or retested in depth here (that's upstream's
+    // responsibility); these two confirm it's wired correctly in our
+    // deployment, since `receiver`'s owner is this test contract (the
+    // constructor caller), not some address we have to separately prank.
+
+    function test_owner_can_rotate_forwarder_address() public {
+        address newForwarder = makeAddr("newForwarder");
+        receiver.setForwarderAddress(newForwarder);
+        assertEq(receiver.getForwarderAddress(), newForwarder);
+
+        uint256 positionId = _marketPositionPastActivationDeadline();
+        bytes memory report = _encodeSingle(CREDeadlineReceiver.Action.MarketClaimDefault, positionId, 0);
+
+        vm.prank(forwarder); // the old forwarder no longer works
+        vm.expectRevert(abi.encodeWithSelector(ReceiverTemplate.InvalidSender.selector, forwarder, newForwarder));
+        receiver.onReport("", report);
+
+        vm.prank(newForwarder);
+        receiver.onReport("", report); // the new one does
+    }
+
+    function test_non_owner_cannot_rotate_forwarder_address() public {
+        vm.prank(buyer);
+        vm.expectRevert(); // Ownable's OwnableUnauthorizedAccount
+        receiver.setForwarderAddress(makeAddr("attackerForwarder"));
     }
 }

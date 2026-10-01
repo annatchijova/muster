@@ -8,6 +8,10 @@ libs = ["lib"]
 # the structs or the getters just to dodge a compiler limitation.
 via_ir = true
 
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+]
+
 [rpc_endpoints]
 monad_testnet = "${MONAD_TESTNET_RPC_URL}"
 

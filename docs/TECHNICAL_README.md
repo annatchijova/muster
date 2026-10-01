@@ -14,22 +14,34 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 - **Level 2 — `CapacityPool.sol`**: fungible, multi-provider capacity pooled
   by domain class, routed FIFO at activation, same Level 3/4/5 flow at the
   per-assignment grain. 42/42 tests passing.
+- **Chainlink CRE integration — `CREDeadlineReceiver.sol` + the
+  `deadline-keeper` workflow**: automates the six deliberately-permissionless
+  deadline functions (`claimDefault`/`finalizeDelivery`/
+  `resolveDisputeByTimeout` and their `CapacityPool` equivalents) instead of
+  requiring someone to remember to call them. 9/9 Solidity tests, 5/5
+  workflow tests, and exercised live end-to-end on Monad testnet (see "Live
+  on Monad testnet" below and "Sponsor integration — Chainlink CRE" further
+  down this document).
 
-91/91 tests passing total (including `test/RedTeam.t.sol`'s 6-test
-regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three confirmed
-and fixed findings). Five generations of deploy to Monad testnet (chain id
+100/100 Solidity tests passing total (including `test/RedTeam.t.sol`'s
+6-test regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three
+confirmed and fixed findings) plus 5/5 CRE workflow tests. Six generations
+of `CapacityMarket`/`CapacityPool` deploy to Monad testnet (chain id
 10143), all kept live and verified as this project's own audit trail — see
 `README.md`'s "Live on Monad testnet" for every address and which is
 current. Current (Level 5): `CapacityMarket` at
 `0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364`, `CapacityPool` at
-`0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` — **not yet exercised live**,
-only in Foundry. The prior pair (Level 4, single `arbitrator` field) was
-also never exercised live; the pair before that (pre-Level-4, patched) was
-exercised end-to-end with real MON; everything before that is the
-still-vulnerable pre-audit deploy. Not independently audited beyond this
-project's own red-team pass. Not deployed to mainnet.
+`0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` — **exercised live**: a real
+position was listed, reserved, and activated with a short SLA, then
+automatically defaulted by the CRE workflow once the deadline passed,
+confirmed by the `Defaulted` event and the position's onchain status. The
+prior pair (Level 4, single `arbitrator` field) was never exercised live;
+the pair before that (pre-Level-4, patched) was exercised end-to-end with
+real MON by hand; everything before that is the still-vulnerable pre-audit
+deploy. Not independently audited beyond this project's own red-team pass.
+Not deployed to mainnet.
 
-**What "deployed" means here, for the pre-Level-4 pair that was actually
+**What "deployed" means here, for the pairs that were actually
 exercised:** those contracts were run end-to-end on the live testnet — `listCapacity` →
 `reserve` → `activate` → `acceptActivation` → `claimDelivery` → `settle` on
 `CapacityMarket`, and `contribute` → `reserve` → `activate` →
@@ -37,11 +49,13 @@ exercised:** those contracts were run end-to-end on the live testnet — `listCa
 `CapacityPool` — with real MON, not Anvil. The provider's payout
 (`price + collateral` exactly, both times) and the contract's
 balance returning to `0` after settlement are now confirmed on a real
-chain, not only asserted by the local Foundry suite. What this single run
-does **not** demonstrate: the default/dispute/expire paths, concurrent
-activity from multiple buyers, or anything at the scale or adversarial
-conditions a live market would actually see — those remain demonstrated
-only by the test suite.
+chain, not only asserted by the local Foundry suite. The *default* path was
+separately exercised live too, automatically, via the CRE workflow — see
+"Sponsor integration — Chainlink CRE" below. What none of this yet
+demonstrates: the dispute/arbitration-panel or expire paths running live,
+concurrent activity from multiple buyers, or anything at the scale or
+adversarial conditions a live market would actually see — those remain
+demonstrated only by the test suite.
 
 ## What MUSTER is, precisely
 
@@ -594,21 +608,78 @@ sibling's settlement. Tests:
 Deployed via `script/DeployCREReceiver.s.sol`, wired to the Monad testnet
 production `KeystoneForwarder`
 (`0xF8344CFd5c43616a4366C34E3EEE75af79a74482`, confirmed against
-docs.chain.link's forwarder directory — not the mock forwarder
-`0xB9F79d863261869B234c481D1f9A7af84AeAd192` used only by local
-`cre workflow simulate --broadcast`) and the current Level 5
-`CapacityMarket`/`CapacityPool` addresses.
+docs.chain.link's forwarder directory) and the current Level 5
+`CapacityMarket`/`CapacityPool` addresses:
 
-### The workflow itself — not yet built
+| Instance | Address | Trusted forwarder | Use |
+|---|---|---|---|
+| Production | `0x544e73b2478B45c46b11E86dFaF07065F596fd05` | Real `KeystoneForwarder` | What a real deployed DON workflow talks to |
+| Mock-forwarder staging | `0xD8979A669b360cb02c8bAC95065669f609aFA5b0` | Mock `KeystoneForwarder` (`0xB9F79d863261869B234c481D1f9A7af84AeAd192`) | What local `cre workflow simulate --broadcast` talks to — see below for why a second instance exists |
 
-The offchain half (a CRE workflow: cron trigger sweeping stored deadlines,
-chain-read to confirm a position/assignment is still in the expected
-status before acting, `writeReport()` to this receiver) requires an
-authenticated `cre login`/`cre init` against a real Chainlink account —
-confirmed by testing directly: even local workflow scaffolding fails
-without it. Deliberately not hand-written from guessed boilerplate instead
-of the real generated scaffold; see `AGENTS.md`'s "Sponsor bounty scope"
-for current status.
+Both Sourcify-verified. `config.staging.json` points at the mock-forwarder
+instance; `config.production.json` at the real one.
+
+### The workflow itself — built, tested, and run live against Monad testnet
+
+`muster-cre/deadline-keeper/workflow.ts`: a cron-triggered CRE workflow
+(TypeScript), scaffolded for real via `cre init` against an authenticated
+Chainlink account (not hand-written from guessed boilerplate — even local
+scaffolding requires login, confirmed by testing it directly before
+assuming otherwise). On each tick it:
+
+1. Reads `CapacityMarket.nextPositionId()`/`positions(id)` and
+   `CapacityPool.nextReservationId()`/`reservationInfo`/`assignmentInfo` for
+   every position/assignment, over the real Monad testnet RPC via
+   `EVMClient`.
+2. Checks each one's status and deadline against the same preconditions
+   `claimDefault`/`finalizeDelivery`/`resolveDisputeByTimeout` (and their
+   `CapacityPool` equivalents) check onchain — a local pre-filter, not a
+   second source of truth; a few seconds of clock skew here costs nothing,
+   since the actual gate is still the onchain check inside each function,
+   which `CREDeadlineReceiver` already calls via `try`/`catch`.
+3. Batches every due `(action, id, subId)` into one ABI-encoded
+   `DeadlineAction[]` report and submits it via `writeReport()`.
+
+**Exercised end-to-end against live Monad testnet state — not just typed
+and reasoned about:**
+
+- A dry run (`cre workflow simulate`, no `--broadcast`) against the real
+  Level 5 deployment correctly read live chain state and reported "No due
+  deadlines found" when that was true.
+- A real position was listed/reserved/activated on `CapacityMarket` with a
+  45-second `activationSLA`; once it lapsed, `cre workflow simulate
+  --broadcast` found it, encoded the report, and submitted a real
+  transaction.
+
+**One real, instructive failure, documented rather than hidden:** the
+first `--broadcast` attempt submitted successfully (tx status success) but
+the position never changed state. Tracing it down: local
+`--broadcast` simulation routes through Monad testnet's **Mock**
+`KeystoneForwarder` (`0xB9F79d863261869B234c481D1f9A7af84AeAd192`) — not
+the **production** Forwarder (`0xF8344CFd5c43616a4366C34E3EEE75af79a74482`)
+the deployed `CREDeadlineReceiver` trusts. The mock Forwarder's own
+`ReportProcessed` event recorded `result: false` — `ReceiverTemplate`'s
+forwarder check correctly rejected the call, exactly as designed, because
+the mock forwarder isn't the address this receiver was deployed to trust.
+Confirmed root cause directly (decoded the event, matched the address),
+not guessed. Fix: deployed a second `CREDeadlineReceiver` instance wired to
+the **mock** forwarder, for local `--broadcast` testing specifically, and
+pointed `config.staging.json` at it (`config.production.json` keeps the
+real one). Re-ran the identical scenario against it: the Mock Forwarder's
+`ReportProcessed` event recorded `result: true`, `CapacityMarket` emitted
+`Defaulted(1)`, and the position's onchain status read back as
+`Defaulted` — the full pipeline, cron trigger through onchain state
+change, proven on a real chain.
+
+**What this does not yet prove:** a report delivered by the real DON
+through the real production Forwarder, since that requires Deploy Access
+on the CRE account (not yet enabled — `cre account access` needs a manual
+grant). The production `CREDeadlineReceiver`
+(`0xF8344CFd5c4...`-trusting instance) is deployed and verified, ready for
+that once access is granted; its forwarder-check logic is exactly the
+logic already proven correct against the mock-forwarder instance — the
+`ReceiverTemplate` code path is identical, only the trusted address
+differs.
 
 ## Build & test
 
@@ -619,11 +690,16 @@ forge build
 forge test
 ```
 
-Last run: 98/98 tests passed (`CapacityMarket.t.sol`: 43,
+Last run: 100/100 Solidity tests passed (`CapacityMarket.t.sol`: 43,
 `CapacityPool.t.sol`: 42, `RedTeam.t.sol`: 6,
-`CREDeadlineReceiver.t.sol`: 7). This proves the invariants
-stated above hold under the specific scenarios each test encodes,
-including the three historical vulnerabilities in
+`CREDeadlineReceiver.t.sol`: 9). Plus the CRE workflow's own suite —
+`cd muster-cre/deadline-keeper && bun test` — 5/5 passing, run against real
+on-chain data where the test exercises reads, and against the SDK's test
+mocks where it exercises the decode/dispatch logic (see "The workflow
+itself" above for what was additionally confirmed live against Monad
+testnet, outside this automated suite). The Solidity suite proves the
+invariants stated above hold under the specific scenarios each test
+encodes, including the three historical vulnerabilities in
 `docs/SECURITY_AUDIT_2026-10-01.md` staying fixed. It does not constitute an
 independent security audit beyond this project's own red-team pass, and no
 fuzzing or formal verification has been run yet.
