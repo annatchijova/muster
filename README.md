@@ -1,4 +1,4 @@
-<p align="center"><a href="docs/TECHNICAL_README.md"><strong>→ Technical README</strong></a> (architecture, invariants, trust boundary, test evidence)</p>
+<p align="center"><a href="docs/TECHNICAL_README.md"><strong>→ Technical README</strong></a> (architecture, invariants, trust boundary, test evidence) · <a href="docs/BUSINESS_CASE.md"><strong>→ Business case</strong></a> (why this scales as a market, not just a demo)</p>
 
 # MUSTER
 
@@ -218,10 +218,13 @@ asset primitive — future response capacity — and the market structure that
 makes it transferable before it's needed. See
 [`docs/TECHNICAL_README.md`](docs/TECHNICAL_README.md) for the state machine
 in full, the trust boundary (what's provable onchain vs. what isn't), known
-limitations, and the next levels planned.
+limitations, and the next levels planned — and
+[`docs/BUSINESS_CASE.md`](docs/BUSINESS_CASE.md) for why the pooled,
+permissionless-enforcement design scales to new verticals and higher volume
+without rebuilding the core transaction engine.
 
 ## License
 
-Not finalized — the hackathon's licensing requirement hasn't been confirmed
-yet. Contracts currently carry `UNLICENSED` as a placeholder. Default plan
-once confirmed: Apache-2.0.
+Apache-2.0 — see [`LICENSE`](LICENSE). The Monad Hackathon rules require
+an OSI-approved license (MIT, Apache 2.0, GPL, or similar) kept publicly
+accessible on GitHub during and after the hackathon.
