@@ -1,0 +1,133 @@
+# Every entity here is built purely from CapacityMarket/CapacityPool's own
+# emitted events, except the two fields noted below that need a
+# supplementary contract read because the relevant event genuinely doesn't
+# carry them (not a limitation of this indexer — see src/handlers/effects.ts).
+
+"""
+CapacityMarket.sol's CapacityPosition (Level 1), materialized and kept in
+sync by every lifecycle event for that position. One row per positionId;
+`status` mirrors the contract's `Status` enum and always reflects the most
+recent event processed for this position.
+
+`disputeWindow` and the arbitration panel are NOT included here: Level 1's
+`Listed` event does not emit them (only domain/quantity/window/SLA/price/
+collateral are emitted), and no later event carries them either — reading
+them requires calling `CapacityMarket.positions(positionId)`/
+`arbitrationPanel(positionId)` directly, not something this indexer can
+backfill from logs alone.
+"""
+type Position {
+  id: ID! # "<chainId>-<positionId>"
+  positionId: BigInt!
+  domain: String!
+  quantity: BigInt!
+  validFrom: BigInt!
+  validUntil: BigInt!
+  activationSLA: BigInt!
+  provider: String!
+  buyer: String
+  price: BigInt!
+  collateral: BigInt!
+  activationDeadline: BigInt
+  disputeDeadline: BigInt
+  status: String!
+  lastUpdatedBlock: BigInt!
+  lastUpdatedAt: BigInt!
+}
+
+"""
+CapacityPool.sol's PoolClass (Level 2) aggregate — one row per classId.
+`totalCommitted`/`available` are maintained purely by arithmetic on
+Contributed/Reserved/ReservationExpired, matching the same accounting
+identity the contract itself enforces (see docs/TECHNICAL_README.md "Why
+activate() cannot run out of capacity"). `ContributionWithdrawn` is
+deliberately not consumed here: verified against
+`CapacityPool.withdrawContribution`'s actual body, it zeroes only that one
+Contribution's `remaining` and pays out collateral — it never touches
+`pool.totalCommitted`/`pool.available`, so there is nothing on this entity
+for that event to update (see config.yaml's description for the same
+note).
+
+`domain`/`validFrom`/`validUntil`/`activationSLA`/`pricePerUnit`/
+`collateralPerUnit` are the one field set in this whole schema that this
+indexer cannot get from events: `Contributed` only emits
+`(classId, provider, quantity, collateral)` — the full `TermsClass` that
+`classId` hashes is never emitted anywhere. These five fields are
+populated by one `poolInfo(classId)` read the first time a class is seen
+(see FETCH_POOL_TERMS in src/handlers/effects.ts), cached from then on —
+not re-derived from logs. If that read fails (RPC down at indexing time),
+these fields stay null rather than blocking indexing of the class's
+quantity/availability.
+"""
+type PoolClass {
+  id: ID! # "<chainId>-<classId>"
+  classId: String!
+  domain: String
+  validFrom: BigInt
+  validUntil: BigInt
+  activationSLA: BigInt
+  pricePerUnit: BigInt
+  collateralPerUnit: BigInt
+  totalCommitted: BigInt!
+  available: BigInt!
+  lastUpdatedBlock: BigInt!
+}
+
+"""
+CapacityPool.sol's Reservation — one row per reservationId. `status`
+mirrors `ReservationStatus`. `assignmentCount` is 0 until `activate()`
+routes it (see Assignment below).
+"""
+type Reservation {
+  id: ID! # "<chainId>-<reservationId>"
+  reservationId: BigInt!
+  classId: String!
+  buyer: String!
+  quantity: BigInt!
+  activationDeadline: BigInt
+  assignmentCount: Int!
+  status: String!
+  lastUpdatedBlock: BigInt!
+}
+
+"""
+One row per (reservationId, assignmentIndex) slice routed by `activate()`.
+`provider`/`quantity`/`price`/`collateral` are not in `ReservationActivated`
+(it only emits `assignmentCount`) or in any single later event together —
+they're fetched once via `assignmentInfo(reservationId, index)` right after
+`ReservationActivated` (see FETCH_ASSIGNMENT_DETAILS in
+src/handlers/effects.ts), then kept in sync by each assignment's own
+lifecycle events (Accepted/DeliveryClaimed/Disputed/Defaulted/Settled/
+Refunded all name reservationId+assignmentIndex, no further reads needed).
+"""
+type Assignment {
+  id: ID! # "<chainId>-<reservationId>-<assignmentIndex>"
+  reservationId: BigInt!
+  assignmentIndex: Int!
+  provider: String!
+  quantity: BigInt!
+  price: BigInt!
+  collateral: BigInt!
+  disputeDeadline: BigInt
+  status: String!
+  lastUpdatedBlock: BigInt!
+}
+
+"""
+Mirrors `ProviderStats` from both contracts' `ProviderStatsUpdated` event
+directly — no computation needed, the event already carries the running
+totals. Kept separate per contract (CapacityMarket vs CapacityPool each
+have their own storage and their own counts for the same address — see
+AGENTS.md's "Reputation tracking" entry for why they aren't merged
+onchain; this indexer mirrors that split rather than inventing a merge).
+"""
+type ProviderStat {
+  id: ID! # "<chainId>-<contractName>-<providerAddress>"
+  contractName: String! # "CapacityMarket" | "CapacityPool"
+  provider: String!
+  settledCount: BigInt!
+  defaultedCount: BigInt!
+  disputesLostCount: BigInt!
+  disputesTimedOutCount: BigInt!
+  lastUpdatedBlock: BigInt!
+}

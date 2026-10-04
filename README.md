@@ -150,6 +150,14 @@ surfaced (local simulation uses a different Forwarder than production —
 caught, diagnosed, and worked around with a second receiver instance, not
 hidden).
 
+**Envio indexer**: [`envio/`](envio/) indexes both contracts' full
+lifecycle plus provider reputation into a queryable GraphQL API — the only
+way to browse available capacity today besides raw `cast call`. `envio
+codegen` and a strict `tsc --noEmit` both pass against the real generated
+types; a full sync against live Monad testnet data hasn't been run yet
+(needs Docker Postgres) — see [`envio/README.md`](envio/README.md) for
+exactly what's verified so far and what isn't.
+
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`, `src/CREDeadlineReceiver.sol`), plus the
   `muster-cre/` Chainlink CRE workflow project (TypeScript).

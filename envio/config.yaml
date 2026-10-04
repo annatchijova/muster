@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=node_modules/envio/evm.schema.json
+name: muster
+description: >
+  Indexes CapacityMarket.sol (Level 1) and CapacityPool.sol (Level 2) on
+  Monad testnet, so capacity can be browsed by querying this indexer's
+  GraphQL API instead of raw `cast call`/`cast logs` against the chain.
+  Deliberately not listed below, no entity needs them: DisputeVoteCast/
+  AssignmentDisputeVoteCast (per-vote tally, redundant with the
+  Settled/Refunded that follows in the same tx), DisputeResolved/
+  AssignmentDisputeResolved (same — Settled/Refunded already carries the
+  outcome as a status transition), and ContributionWithdrawn (verified
+  against CapacityPool.withdrawContribution's actual body: it zeroes only
+  that one Contribution's `remaining` and pays out collateral — it does
+  NOT touch `pool.totalCommitted`/`pool.available`, so there is no
+  PoolClass field for this event to update; see schema.graphql).
+field_selection:
+  transaction_fields:
+    - hash
+contracts:
+  - name: CapacityMarket
+    abi_file_path: abis/CapacityMarket.json
+    events:
+      - event: Listed
+      - event: Reserved
+      - event: Transferred
+      - event: Activated
+      - event: Accepted
+      - event: DeliveryClaimed
+      - event: Disputed
+      - event: Settled
+      - event: Refunded
+      - event: Expired
+      - event: Defaulted
+      - event: ProviderStatsUpdated
+  - name: CapacityPool
+    abi_file_path: abis/CapacityPool.json
+    events:
+      - event: Contributed
+      - event: Reserved
+      - event: ReservationTransferred
+      - event: ReservationExpired
+      - event: ReservationActivated
+      - event: AssignmentAccepted
+      - event: AssignmentDeliveryClaimed
+      - event: AssignmentDisputed
+      - event: AssignmentDefaulted
+      - event: AssignmentSettled
+      - event: AssignmentRefunded
+      - event: ProviderStatsUpdated
+chains:
+  # Monad testnet, chain id 10143 — a HyperSync-supported chain, so no
+  # explicit `rpc:` block is needed here for log ingestion (only chains
+  # HyperSync doesn't cover need one, e.g. a local Anvil node). The two
+  # on-demand `poolInfo`/`assignmentInfo` contract reads in
+  # src/handlers/effects.ts use their own plain RPC URL
+  # (MONAD_TESTNET_RPC_URL, matching the root repo's .env.example naming)
+  # via viem — unrelated to this chains/rpc config, which only governs
+  # HyperSync's own log-ingestion transport.
+  - id: 10143
+    # First block containing code at either deployed address (binary-searched
+    # via `cast code --block N`, confirmed empirically 2026-10-04 — not
+    # guessed, since the actual Level 5 deploy's broadcast file isn't
+    # present in this working tree; see README's "Live on Monad testnet"
+    # for the addresses). CapacityMarket: 67351825, CapacityPool: 67351828
+    # — three blocks apart, same deploy script run; one shared start_block
+    # covers both with no missed events.
+    start_block: 67351825
+    contracts:
+      - name: CapacityMarket
+        address: "0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364"
+      - name: CapacityPool
+        address: "0x44f305fbCF56acECe8f79Cd9773351E68634B0D5"
