@@ -341,11 +341,11 @@ run covers when reporting results, not "tests pass" unscoped.
 Researched against actual sponsor docs, not the hackathon idea doc's
 speculation — don't re-litigate these without new information:
 
-- **Envio ($1k) — pursue; indexer built, not yet run against live data.**
-  Monad testnet has native, documented HyperIndex/HyperSync support.
-  Indexing MUSTER's own events is not decorative: it's the only way to
-  browse available capacity today besides raw `cast call`. Zero contract
-  changes, as expected. `envio/` — `config.yaml`, `schema.graphql`,
+- **Envio ($1k) — pursue; DONE, exercised live.** Monad testnet has native,
+  documented HyperIndex/HyperSync support. Indexing MUSTER's own events is
+  not decorative: it's the only way to browse available capacity today
+  besides raw `cast call`. Zero contract changes, as expected. `envio/` —
+  `config.yaml`, `schema.graphql`,
   `src/handlers/{CapacityMarket,CapacityPool,effects}.ts` indexing both
   contracts' full lifecycle plus `ProviderStatsUpdated`. Two fields
   (`PoolClass`'s terms, `Assignment`'s provider/quantity/price/collateral)
@@ -353,15 +353,31 @@ speculation — don't re-litigate these without new information:
   the relevant event genuinely doesn't carry them — verified against the
   live Solidity source, not assumed; see `envio/README.md` and
   `envio/config.yaml`'s own notes for exactly which fields and why.
-  **Verified**: `envio codegen` and `tsc --noEmit` both pass clean against
-  the real generated types (not hand-waved — ran both), and the
-  `poolInfo` decode shape was confirmed live against the deployed
-  `CapacityPool` via a standalone `viem` call. **Not yet verified**: a full
-  historical sync against Monad testnet and the GraphQL API actually
-  returning expected rows — needs Docker Postgres, not run this session.
-  `CapacityPool`'s current Level 5 deployment has no live `Contributed`/
-  `activate` activity yet to sync against regardless (see `envio/README.md`
-  "What's actually verified").
+
+  **Exercised live, not just typed and reasoned about:** `envio codegen`
+  and `tsc --noEmit` both pass clean against the real generated types; a
+  plain-RPC fallback (no API token) was tried and empirically rejected —
+  Monad testnet's public RPC caps `eth_getLogs` at 100 blocks, making an
+  ~840k-block historical sync impractical — confirming HyperSync (and a
+  free API token) is the only practical path on this chain, not assumed.
+  With a real `ENVIO_API_TOKEN`, `npm run dev` synced from `start_block` to
+  chain head in under 5 seconds; querying Postgres directly (a local
+  Hasura/port-8080 collision with an unrelated service on this machine
+  blocked the GraphQL route specifically, not the indexer) confirmed **2
+  real `Position` rows**, status `Defaulted`, matching the live-exercised
+  position from `README.md`'s "Live on Monad testnet" exactly.
+
+  **One real, structural finding, surfaced rather than hidden:**
+  `ProviderStat` has 0 rows, and will have 0 rows against the *currently
+  deployed* contracts regardless of how long the indexer runs — the
+  deployed `CapacityMarket`/`CapacityPool` (2026-10-01) predate
+  `ProviderStatsUpdated` (added 2026-10-04, this repo's own later commit),
+  so the live bytecode doesn't contain that event. Not a bug in the
+  indexer; will populate the moment a contract with `_recordOutcome` is
+  (re)deployed and `config.yaml` is updated to match. `PoolClass`/
+  `Reservation`/`Assignment` are also 0, correctly: no live `Contributed`/
+  `activate` activity exists on the deployed Level 5 `CapacityPool` yet.
+  See `envio/README.md` "What's actually verified" for the full trace.
 - **Chainlink CRE ($3k) — pursue; DONE, exercised live.** Real,
   currently-unsolved gap: `claimDefault`/`finalizeDelivery`/
   `resolveDisputeByTimeout` (and the `CapacityPool` equivalents) are

@@ -152,11 +152,13 @@ hidden).
 
 **Envio indexer**: [`envio/`](envio/) indexes both contracts' full
 lifecycle plus provider reputation into a queryable GraphQL API — the only
-way to browse available capacity today besides raw `cast call`. `envio
-codegen` and a strict `tsc --noEmit` both pass against the real generated
-types; a full sync against live Monad testnet data hasn't been run yet
-(needs Docker Postgres) — see [`envio/README.md`](envio/README.md) for
-exactly what's verified so far and what isn't.
+way to browse available capacity today besides raw `cast call`. Synced live
+against Monad testnet and confirmed against Postgres directly: both real
+`Listed`→`Defaulted` positions from the CRE exercise above came back
+correctly. `ProviderStat` currently reads empty against the live
+contracts — not a bug, the deployed bytecode predates the
+`ProviderStatsUpdated` event added in a later commit; see
+[`envio/README.md`](envio/README.md) for the full, honest trace.
 
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`, `src/CREDeadlineReceiver.sol`), plus the

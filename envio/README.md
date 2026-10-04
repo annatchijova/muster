@@ -36,39 +36,56 @@ there is no entity field for it to update.
 
 ```bash
 npm install
-cp .env.example .env   # fill in MONAD_TESTNET_RPC_URL if not using the default
+cp .env.example .env
+# Add ENVIO_API_TOKEN (free — https://envio.dev/app/api-tokens) to .env.
+# HyperSync log ingestion requires one; the two supplementary poolInfo/
+# assignmentInfo reads in effects.ts do not (they use MONAD_TESTNET_RPC_URL).
 npm run codegen
 npm run dev             # local Postgres via Docker, auto-codegen, live reload
 ```
 
-`npm run dev`/`npm run start` need Docker (Envio's local Postgres) and were
-**not run in the session that built this indexer** — only `envio codegen`
-and `tsc --noEmit` (both clean, see below) plus a direct `viem.readContract`
-call against the live deployed `CapacityPool` to confirm the `poolInfo`
-decode shape matches what `effects.ts` expects. Running the actual
-historical sync against Monad testnet, and confirming the GraphQL API
-returns the expected rows, is the next concrete step before calling this
-bounty entry complete — not yet demonstrated end-to-end the way the CRE
-integration was.
+A plain-RPC fallback (`chains[0].rpc: { url: ..., for: sync }`, no token
+needed) was tried and rejected: Monad testnet's public RPC caps
+`eth_getLogs` at a 100-block range, and at ~400ms blocks the full range
+from deploy to head is roughly 840k blocks — confirmed empirically to
+converge far too slowly to be practical, not just assumed. HyperSync (and
+therefore a free API token) is the only practical path for this chain.
 
 ## What's actually verified, as of 2026-10-04
 
-- `npx envio codegen` — succeeds against this `config.yaml` +
-  `schema.graphql` (exit 0, `.envio/types.d.ts` generated).
-- `npx tsc --noEmit` — succeeds against the generated types with
-  `strict: true` (exit 0, confirmed `--listFiles` actually compiled
-  `src/handlers/*.ts`, not skipped them).
-- `poolInfo` decode shape — called live against the deployed `CapacityPool`
-  (`0x44f305fbCF56acECe8f79Cd9773351E68634B0D5`) with a nonexistent
-  `classId` via a standalone `viem` script; the returned tuple's field
-  names/order matched `fetchPoolTerms`'s destructuring exactly.
-- **Not verified**: there is currently no live `Contributed`/`reserve`/
-  `activate` activity on the deployed Level 5 `CapacityPool` to index
-  against (only the earlier pre-Level-4 pair was ever exercised live on
-  `CapacityPool` — see `README.md`'s "Live on Monad testnet"), so the
-  `fetchAssignmentDetails` effect and the full event-to-entity pipeline
-  have not been exercised against real chain data, only against the
-  type system and one isolated contract read.
+Run for real, end to end, with Docker Postgres and a free `ENVIO_API_TOKEN`
+— not just code-reviewed:
+
+- `npx envio codegen` and `npx tsc --noEmit` (`strict: true`) — both clean,
+  confirmed via `--listFiles` that `src/handlers/*.ts` were actually
+  compiled.
+- `npm run dev` — synced from the configured `start_block` to chain head in
+  under 5 seconds ("All events have been fetched... switching to realtime
+  indexing"), then queried directly against Postgres (bypassing a local
+  Hasura/port-8080 collision with an unrelated service on this machine):
+  **2 real `Position` rows**, both status `Defaulted`, matching exactly the
+  live-exercised position from `README.md`'s "Live on Monad testnet"
+  section — `provider`/`buyer`/`domain`/`price` all correctly decoded from
+  `Listed`, carried through `Reserved`/`Activated` to the final `Defaulted`
+  status written by `claimDefault`'s handler.
+- `PoolClass`/`Reservation`/`Assignment` rows: **0**, correctly — there is
+  no live `Contributed`/`reserve`/`activate` activity on the deployed Level
+  5 `CapacityPool` yet (only the earlier pre-Level-4 pair was ever
+  exercised live on `CapacityPool`), so `fetchAssignmentDetails` has not
+  been exercised against real chain data, only against the type system and
+  one isolated live `poolInfo` call (confirmed separately, decode shape
+  matches `fetchPoolTerms`'s destructuring exactly).
+- **`ProviderStat` rows: 0 — and this one is structural, not "not reached
+  yet".** The deployed `CapacityMarket`/`CapacityPool` (redeployed
+  2026-10-01 per `README.md`) predate `ProviderStatsUpdated`, which this
+  repo's `src/CapacityMarket.sol`/`CapacityPool.sol` only gained in the
+  commit that added `ProviderStats` (2026-10-04, after that deploy). The
+  live contracts' bytecode does not contain that event at all — no amount
+  of waiting or re-syncing will produce a `ProviderStat` row against the
+  currently deployed addresses. The handler is correct and will populate
+  this entity the moment a contract containing `_recordOutcome` is
+  (re)deployed and `config.yaml`'s addresses/`start_block` are updated to
+  match — but until then, 0 rows is the only correct answer, not a bug.
 
 ## Deployment addresses indexed
 
