@@ -10,10 +10,12 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 
 - **Level 1 — `CapacityMarket.sol`**: single-provider capacity position, full
   lifecycle plus Level 3's delivery-claim/dispute flow and Level 4/5's
-  M-of-N arbitration panels. 43/43 tests passing.
+  M-of-N arbitration panels, plus read-only provider reputation tracking.
+  51/51 tests passing.
 - **Level 2 — `CapacityPool.sol`**: fungible, multi-provider capacity pooled
   by domain class, routed FIFO at activation, same Level 3/4/5 flow at the
-  per-assignment grain. 42/42 tests passing.
+  per-assignment grain, plus the same reputation tracking. 50/50 tests
+  passing.
 - **Chainlink CRE integration — `CREDeadlineReceiver.sol` + the
   `deadline-keeper` workflow**: automates the six deliberately-permissionless
   deadline functions (`claimDefault`/`finalizeDelivery`/
@@ -23,7 +25,7 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
   on Monad testnet" below and "Sponsor integration — Chainlink CRE" further
   down this document).
 
-100/100 Solidity tests passing total (including `test/RedTeam.t.sol`'s
+116/116 Solidity tests passing total (including `test/RedTeam.t.sol`'s
 6-test regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three
 confirmed and fixed findings) plus 5/5 CRE workflow tests. Six generations
 of `CapacityMarket`/`CapacityPool` deploy to Monad testnet (chain id
@@ -566,6 +568,18 @@ destination, not patches on a throwaway prototype:
   already-documented gas-griefing surface above, and needs the same
   adversarial review this walk's own correctness proof got — a Level 6-
   adjacent direction, not a small addition to the current walk.
+- **CRE deployment access pending Chainlink's manual grant (`determinism_level`:
+  best-effort, not yet production-proven).** `cre account access` still
+  returns "Deployment access is not yet enabled for your organization" as
+  of 2026-10-04 (access request submitted 2026-10-01, no ETA). This blocks
+  only the real-DON path — a report delivered through the production
+  `KeystoneForwarder`. It does not block anything already claimed above:
+  the workflow, the receiver's forwarder-check logic, and the full
+  cron-to-onchain-state-change pipeline are proven end-to-end against a
+  second `CREDeadlineReceiver` instance wired to the **mock** forwarder
+  (see "Sponsor integration" below for the full trace). The production
+  instance is deployed, verified, and inert until access is granted — same
+  code path, only the trusted forwarder address differs.
 
 ---
 
@@ -701,8 +715,8 @@ forge build
 forge test
 ```
 
-Last run: 100/100 Solidity tests passed (`CapacityMarket.t.sol`: 43,
-`CapacityPool.t.sol`: 42, `RedTeam.t.sol`: 6,
+Last run: 116/116 Solidity tests passed (`CapacityMarket.t.sol`: 51,
+`CapacityPool.t.sol`: 50, `RedTeam.t.sol`: 6,
 `CREDeadlineReceiver.t.sol`: 9). Plus the CRE workflow's own suite —
 `cd muster-cre/deadline-keeper && bun test` — 5/5 passing, run against real
 on-chain data where the test exercises reads, and against the SDK's test

@@ -2,12 +2,19 @@
 
 # MUSTER
 
-A security incident doesn't wait for you to find a specialist. By the time
-you need a ZK-security responder or a supply-chain DFIR team, the market for
-their time is gone — they're either busy, or you're negotiating a rate under
-pressure, or both.
+A security incident doesn't wait for you to find a specialist. These
+incidents happen often enough that no company can just hope one never comes
+— but rare enough that almost nobody can justify a full-time hire, or a
+retainer that bills every month whether or not the specialist is ever used.
+And when the incident actually happens, you're searching the worst possible
+market as a buyer: whoever's free knows you're under pressure and prices
+accordingly, assuming anyone's free at all.
 
-**MUSTER lets you buy that capacity before you need it.**
+**MUSTER lets you buy that capacity before you need it — and it isn't a
+subscription.** You reserve a specific, collateral-backed slot ahead of
+time. If the incident never comes, you transfer the reservation to someone
+who does need it before it expires; you're not stuck paying month after
+month for a specialist sitting idle, the way a retainer makes you.
 
 ## What this is
 
@@ -41,7 +48,8 @@ non-negotiable between two parties who don't trust each other:
 |---|---|
 | The same hour can informally be promised to two clients | `reserve()` only succeeds once per position — enforced, not policed |
 | A missed SLA means a dispute, maybe a chargeback | A collateral bond pays out automatically on a missed deadline |
-| An unused reservation is a sunk cost | An unused position transfers to another buyer before it expires |
+| An unused reservation is a sunk cost — a retainer bills monthly either way | An unused position transfers to another buyer before it expires; nothing was paid for and lost |
+| Searching mid-incident means negotiating with whoever's free, under pressure, at whatever rate they name | Price and provider are locked in at reservation time, before urgency gives anyone leverage |
 | "Trust me, I was available" | What happened — reserved, transferred, activated, accepted, settled, defaulted — is a public, ordered, tamper-evident record |
 
 ## How it behaves
@@ -145,7 +153,7 @@ hidden).
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`, `src/CREDeadlineReceiver.sol`), plus the
   `muster-cre/` Chainlink CRE workflow project (TypeScript).
-- 100/100 Solidity tests passing (`test/`) plus 5/5 CRE workflow tests
+- 116/116 Solidity tests passing (`test/`) plus 5/5 CRE workflow tests
   (`muster-cre/deadline-keeper`), covering all five levels' lifecycles,
   every invariant violation, the CRE receiver's dispatch logic, and a
   permanent regression suite for the red-team findings below.
