@@ -97,8 +97,33 @@ contract CapacityMarket {
         uint256 threshold;
     }
 
+    /// @notice Pure aggregation of outcomes already visible one at a time in
+    /// `Settled`/`Defaulted`/`Refunded`/`DisputeResolved` events — no new
+    /// trust assumption, no offchain oracle. `disputesTimedOutCount` is kept
+    /// separate from `disputesLostCount` on purpose: `resolveDisputeByTimeout`
+    /// is a declared conservative default, not an adjudicated verdict (see
+    /// that function's NatSpec), so it must never be counted as a proven
+    /// fault against the provider. This struct does not feed `activate`'s
+    /// routing anywhere in this contract (Level 1 has nothing to route — one
+    /// provider, one position) and exists as a read surface for a future
+    /// reputation-aware pool, not a decision input here.
+    struct ProviderStats {
+        uint256 settledCount;
+        uint256 defaultedCount;
+        uint256 disputesLostCount;
+        uint256 disputesTimedOutCount;
+    }
+
+    enum ReputationEvent {
+        Settled,
+        Defaulted,
+        DisputeLost,
+        DisputeTimedOut
+    }
+
     uint256 public nextPositionId;
     mapping(uint256 => CapacityPosition) public positions;
+    mapping(address => ProviderStats) public providerStats;
 
     mapping(uint256 => ArbitrationPanel) private panels;
     mapping(uint256 => mapping(address => DisputeVote)) private disputeVotes;
@@ -130,6 +155,13 @@ contract CapacityMarket {
     event DisputeResolved(uint256 indexed positionId, bool providerWon);
     event Expired(uint256 indexed positionId);
     event Defaulted(uint256 indexed positionId);
+    event ProviderStatsUpdated(
+        address indexed provider,
+        uint256 settledCount,
+        uint256 defaultedCount,
+        uint256 disputesLostCount,
+        uint256 disputesTimedOutCount
+    );
 
     error NotProvider();
     error NotBuyer();
@@ -320,6 +352,7 @@ contract CapacityMarket {
 
         p.status = Status.Defaulted;
         emit Defaulted(positionId);
+        _recordOutcome(p.provider, ReputationEvent.Defaulted);
 
         _payout(p.buyer, p.price + p.collateral);
     }
@@ -374,6 +407,7 @@ contract CapacityMarket {
 
         p.status = Status.Refunded;
         emit Refunded(positionId);
+        _recordOutcome(p.provider, ReputationEvent.DisputeTimedOut);
 
         _payout(p.buyer, p.price + p.collateral);
     }
@@ -422,13 +456,38 @@ contract CapacityMarket {
             p.status = Status.Settled;
             emit DisputeResolved(positionId, true);
             emit Settled(positionId);
+            _recordOutcome(p.provider, ReputationEvent.Settled);
             _payout(p.provider, amount);
         } else {
             p.status = Status.Refunded;
             emit DisputeResolved(positionId, false);
             emit Refunded(positionId);
+            _recordOutcome(p.provider, ReputationEvent.DisputeLost);
             _payout(p.buyer, amount);
         }
+    }
+
+    /// @notice Aggregates an outcome already visible in the event just
+    /// emitted at the call site into `providerStats`. Private and called
+    /// exactly once per terminal transition that reflects on the provider's
+    /// track record — never on `expire()` (reflects the buyer's inaction,
+    /// not the provider's) and never twice for the same position, since each
+    /// call site is itself reachable only once per position (`inStatus`
+    /// guards + one-way transitions, invariant 5).
+    function _recordOutcome(address provider, ReputationEvent outcome) private {
+        ProviderStats storage stats = providerStats[provider];
+        if (outcome == ReputationEvent.Settled) {
+            stats.settledCount++;
+        } else if (outcome == ReputationEvent.Defaulted) {
+            stats.defaultedCount++;
+        } else if (outcome == ReputationEvent.DisputeLost) {
+            stats.disputesLostCount++;
+        } else {
+            stats.disputesTimedOutCount++;
+        }
+        emit ProviderStatsUpdated(
+            provider, stats.settledCount, stats.defaultedCount, stats.disputesLostCount, stats.disputesTimedOutCount
+        );
     }
 
     /// @notice Buyer confirms delivery before disputing it (or before the
@@ -441,6 +500,7 @@ contract CapacityMarket {
 
         p.status = Status.Settled;
         emit Settled(positionId);
+        _recordOutcome(p.provider, ReputationEvent.Settled);
 
         _payout(p.provider, p.price + p.collateral);
     }
@@ -458,6 +518,7 @@ contract CapacityMarket {
 
         p.status = Status.Settled;
         emit Settled(positionId);
+        _recordOutcome(p.provider, ReputationEvent.Settled);
 
         _payout(p.provider, p.price + p.collateral);
     }

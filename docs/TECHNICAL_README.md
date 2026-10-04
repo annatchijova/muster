@@ -555,6 +555,17 @@ destination, not patches on a throwaway prototype:
   contracts. A validator can shift it by seconds, not minutes. Accepted,
   documented risk given this project's minutes-to-days SLA range; revisit
   if a future level introduces sub-minute SLAs.
+- **`ProviderStats` is tracked but not consulted.** Both contracts now
+  aggregate each provider's `settledCount`/`defaultedCount`/
+  `disputesLostCount`/`disputesTimedOutCount` from events they already
+  emit (see `AGENTS.md`'s "Reputation tracking" entry), but
+  `CapacityPool.activate()`'s FIFO walk over `contributions` does not read
+  it — routing is still strictly oldest-contribution-first, independent of
+  track record. Making `activate()` reputation-aware needs a bucketed (not
+  dynamically sorted) contribution structure, so it doesn't worsen the
+  already-documented gas-griefing surface above, and needs the same
+  adversarial review this walk's own correctness proof got — a Level 6-
+  adjacent direction, not a small addition to the current walk.
 
 ---
 

@@ -725,4 +725,133 @@ contract CapacityPoolTest is Test {
         );
         pool.activate(reservationId);
     }
+
+    // --- Provider reputation tracking (pure aggregation, no routing effect) ---
+
+    function _providerStats(address who)
+        internal
+        view
+        returns (uint256 settledCount, uint256 defaultedCount, uint256 disputesLostCount, uint256 disputesTimedOutCount)
+    {
+        return pool.providerStats(who);
+    }
+
+    function test_settleAssignment_records_settledCount() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+
+        vm.prank(buyer);
+        pool.settleAssignment(reservationId, 0);
+
+        (uint256 settled, uint256 defaulted, uint256 lost, uint256 timedOut) = _providerStats(providerA);
+        assertEq(settled, 1);
+        assertEq(defaulted, 0);
+        assertEq(lost, 0);
+        assertEq(timedOut, 0);
+    }
+
+    function test_finalizeAssignmentDelivery_records_settledCount() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        pool.finalizeAssignmentDelivery(reservationId, 0);
+
+        (uint256 settled,,,) = _providerStats(providerA);
+        assertEq(settled, 1);
+    }
+
+    function test_claimAssignmentDefault_records_defaultedCount_not_settledCount() public {
+        _seedThreeProviders();
+        uint256 reservationId = _reserve(buyer, 4);
+        vm.prank(buyer);
+        pool.activate(reservationId);
+        vm.warp(block.timestamp + SLA + 1);
+
+        pool.claimAssignmentDefault(reservationId, 0);
+
+        (uint256 settled, uint256 defaulted,,) = _providerStats(providerA);
+        assertEq(settled, 0);
+        assertEq(defaulted, 1);
+    }
+
+    /// @notice A timed-out dispute is a conservative default, never a proven
+    /// fault — mirrors `CapacityMarket`'s equivalent test. See
+    /// `CapacityPool.ProviderStats`'s NatSpec.
+    function test_resolveAssignmentDisputeByTimeout_records_disputesTimedOutCount_not_disputesLostCount() public {
+        _seedThreeProviders();
+        uint256 reservationId = _throughDeliveryClaimedAssignment(4, providerA);
+        vm.prank(buyer);
+        pool.disputeAssignment(reservationId, 0, REASON_HASH);
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        pool.resolveAssignmentDisputeByTimeout(reservationId, 0);
+
+        (,, uint256 lost, uint256 timedOut) = _providerStats(providerA);
+        assertEq(lost, 0);
+        assertEq(timedOut, 1);
+    }
+
+    function test_voteAssignmentDispute_providerWins_records_settledCount() public {
+        address arbitrator = makeAddr("arbitrator");
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 reservationId = _throughDisputedAssignmentWithPanel(panel, 1);
+
+        vm.prank(arbitrator);
+        pool.voteAssignmentDispute(reservationId, 0, true);
+
+        (uint256 settled,, uint256 lost,) = _providerStats(providerA);
+        assertEq(settled, 1);
+        assertEq(lost, 0);
+    }
+
+    function test_voteAssignmentDispute_buyerWins_records_disputesLostCount_not_timedOut() public {
+        address arbitrator = makeAddr("arbitrator");
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 reservationId = _throughDisputedAssignmentWithPanel(panel, 1);
+
+        vm.prank(arbitrator);
+        pool.voteAssignmentDispute(reservationId, 0, false);
+
+        (uint256 settled,, uint256 lost, uint256 timedOut) = _providerStats(providerA);
+        assertEq(settled, 0);
+        assertEq(lost, 1);
+        assertEq(timedOut, 0);
+    }
+
+    /// @notice `expireReservation` reflects the reservation lapsing unused,
+    /// not the provider's performance — it must never move `providerStats`.
+    function test_expireReservation_does_not_affect_providerStats() public {
+        _seedThreeProviders();
+        uint256 reservationId = _reserve(buyer, 4);
+        vm.warp(block.timestamp + 30 days);
+
+        pool.expireReservation(reservationId);
+
+        (uint256 settled, uint256 defaulted, uint256 lost, uint256 timedOut) = _providerStats(providerA);
+        assertEq(settled, 0);
+        assertEq(defaulted, 0);
+        assertEq(lost, 0);
+        assertEq(timedOut, 0);
+    }
+
+    function test_providerStats_accumulate_across_multiple_assignments() public {
+        _seedThreeProviders();
+
+        uint256 first = _throughDeliveryClaimedAssignment(4, providerA);
+        vm.prank(buyer);
+        pool.settleAssignment(first, 0);
+
+        uint256 second = _reserve(buyer, 4);
+        vm.prank(buyer);
+        pool.activate(second);
+        vm.warp(block.timestamp + SLA + 1);
+        pool.claimAssignmentDefault(second, 0);
+
+        (uint256 settled, uint256 defaulted,,) = _providerStats(providerA);
+        assertEq(settled, 1);
+        assertEq(defaulted, 1);
+    }
 }

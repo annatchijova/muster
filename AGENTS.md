@@ -79,6 +79,41 @@ level to rebuild or bypass it.
   `reasonHash` independently — genuinely trust-minimized adjudication, as
   opposed to Level 5's M trusted addresses with no economic weight behind
   a vote.
+- **Reputation tracking (current, read-only) / reputation-weighted routing
+  (planned, Level 6-adjacent).** Decided 2026-10-04, from a mentor framing
+  that generalized the product beyond security specialists to any
+  on-call trade (electrician, notary, etc.) and asked for a Cabify-style
+  pool with reputation. The pool/no-sunk-cost mechanic the framing asked
+  for already existed (`CapacityPool`'s `TermsClass` pooling +
+  `reserve`/`transfer`/`expireReservation` — see
+  `docs/BUSINESS_CASE.md`); reputation did not. Split deliberately into two
+  pieces of very different risk, not built together:
+  - **Shipped**: `ProviderStats` (`settledCount`, `defaultedCount`,
+    `disputesLostCount`, `disputesTimedOutCount`) in both contracts,
+    updated at every terminal transition that reflects on a provider's
+    track record (`settle`/`finalizeDelivery`, `claimDefault`,
+    `resolveDisputeByTimeout`, `_executeDisputeVerdict`, and their
+    `CapacityPool` assignment-level mirrors), emitting `ProviderStatsUpdated`.
+    Pure aggregation of outcomes already visible one at a time in existing
+    events — no new trust assumption, no offchain oracle, does not feed
+    `activate()`'s routing. `disputesTimedOutCount` is tracked separately
+    from `disputesLostCount` on purpose: `resolveDisputeByTimeout` is a
+    declared conservative default (see that function's own NatSpec), never
+    an adjudicated verdict, and counting it as a proven fault would
+    misrepresent the provider. Never updated by `expire()`/
+    `expireReservation()`/`withdrawContribution()` — those reflect the
+    buyer's or provider's own housekeeping, not a performance outcome.
+  - **Not shipped, and not a small addition**: reputation-weighted or
+    tiered routing in `CapacityPool.activate()`. Today's FIFO walk over
+    `contributions` has a proof in `docs/TECHNICAL_README.md` ("Why
+    `activate()` cannot run out of capacity") tied to that exact walk
+    structure; reordering by score needs a bucketed structure (not a
+    dynamic sort — the FIFO walk already has a documented, accepted
+    gas-griefing surface from unbounded contributions-per-class, and
+    sorting would worsen it) and the same adversarial-review rigor Levels
+    3-5 got before touching a proven invariant. Do not build this
+    reactively off one suggestion — scope and review it as its own level
+    first.
 
 Before adding a level, re-read the "Invariants" and "Trust boundary"
 sections of the Technical README and confirm the new level preserves every
@@ -287,10 +322,11 @@ forge test
 ```
 
 A green `forge test` run proves the invariants listed above hold under the
-scenarios in `test/CapacityMarket.t.sol` (43 tests), `test/CapacityPool.t.sol`
-(42 tests), `test/RedTeam.t.sol` (6 tests — the regression suite for
+scenarios in `test/CapacityMarket.t.sol` (51 tests, including 9 for
+`ProviderStats`), `test/CapacityPool.t.sol` (50 tests, including 7 for
+`ProviderStats`), `test/RedTeam.t.sol` (6 tests — the regression suite for
 `docs/SECURITY_AUDIT_2026-10-01.md`'s three fixed findings), and
-`test/CREDeadlineReceiver.t.sol` (9 tests) — 100 total. The CRE workflow has
+`test/CREDeadlineReceiver.t.sol` (9 tests) — 116 total. The CRE workflow has
 its own separate suite: `cd muster-cre/deadline-keeper && bun test` (5
 tests) and `bun run typecheck`. Solidity tests are not an independent
 security audit beyond this project's own red-team pass, and do not cover

@@ -662,4 +662,123 @@ contract CapacityMarketTest is Test {
         assertEq(uint8(_status(positionId)), uint8(CapacityMarket.Status.Settled));
         assertEq(provider.balance, providerBalanceBefore + PRICE + COLLATERAL);
     }
+
+    // --- Provider reputation tracking (pure aggregation, no routing effect) ---
+
+    function _providerStats(address who)
+        internal
+        view
+        returns (uint256 settledCount, uint256 defaultedCount, uint256 disputesLostCount, uint256 disputesTimedOutCount)
+    {
+        return market.providerStats(who);
+    }
+
+    function test_settle_records_settledCount() public {
+        uint256 positionId = _throughDeliveryClaimed();
+
+        vm.prank(buyer);
+        market.settle(positionId);
+
+        (uint256 settled, uint256 defaulted, uint256 lost, uint256 timedOut) = _providerStats(provider);
+        assertEq(settled, 1);
+        assertEq(defaulted, 0);
+        assertEq(lost, 0);
+        assertEq(timedOut, 0);
+    }
+
+    function test_finalizeDelivery_records_settledCount() public {
+        uint256 positionId = _throughDeliveryClaimed();
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        market.finalizeDelivery(positionId);
+
+        (uint256 settled,,,) = _providerStats(provider);
+        assertEq(settled, 1);
+    }
+
+    function test_claimDefault_records_defaultedCount_not_settledCount() public {
+        uint256 positionId = _listReserveActivate();
+        vm.warp(block.timestamp + SLA + 1);
+
+        market.claimDefault(positionId);
+
+        (uint256 settled, uint256 defaulted,,) = _providerStats(provider);
+        assertEq(settled, 0);
+        assertEq(defaulted, 1);
+    }
+
+    /// @notice A timed-out dispute is a conservative default, never a proven
+    /// fault — it must land in `disputesTimedOutCount`, not
+    /// `disputesLostCount`. See `ProviderStats`'s NatSpec.
+    function test_resolveDisputeByTimeout_records_disputesTimedOutCount_not_disputesLostCount() public {
+        uint256 positionId = _throughDeliveryClaimed();
+        vm.prank(buyer);
+        market.dispute(positionId, REASON_HASH);
+        vm.warp(block.timestamp + DISPUTE_WINDOW + 1);
+
+        market.resolveDisputeByTimeout(positionId);
+
+        (,, uint256 lost, uint256 timedOut) = _providerStats(provider);
+        assertEq(lost, 0);
+        assertEq(timedOut, 1);
+    }
+
+    function test_voteDispute_providerWins_records_settledCount() public {
+        address arbitrator = makeAddr("arbitrator");
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 positionId = _listWithPanel(panel, 1);
+        _toDisputed(positionId);
+
+        vm.prank(arbitrator);
+        market.voteDispute(positionId, true);
+
+        (uint256 settled,, uint256 lost,) = _providerStats(provider);
+        assertEq(settled, 1);
+        assertEq(lost, 0);
+    }
+
+    function test_voteDispute_buyerWins_records_disputesLostCount_not_timedOut() public {
+        address arbitrator = makeAddr("arbitrator");
+        address[] memory panel = new address[](1);
+        panel[0] = arbitrator;
+        uint256 positionId = _listWithPanel(panel, 1);
+        _toDisputed(positionId);
+
+        vm.prank(arbitrator);
+        market.voteDispute(positionId, false);
+
+        (uint256 settled,, uint256 lost, uint256 timedOut) = _providerStats(provider);
+        assertEq(settled, 0);
+        assertEq(lost, 1);
+        assertEq(timedOut, 0);
+    }
+
+    /// @notice `expire()` reflects the buyer never reserving/activating, not
+    /// the provider's performance — it must never move `providerStats`.
+    function test_expire_does_not_affect_providerStats() public {
+        uint256 positionId = _list();
+        vm.warp(validUntil);
+        market.expire(positionId);
+
+        (uint256 settled, uint256 defaulted, uint256 lost, uint256 timedOut) = _providerStats(provider);
+        assertEq(settled, 0);
+        assertEq(defaulted, 0);
+        assertEq(lost, 0);
+        assertEq(timedOut, 0);
+    }
+
+    function test_providerStats_accumulate_across_multiple_positions() public {
+        uint256 first = _throughDeliveryClaimed();
+        vm.prank(buyer);
+        market.settle(first);
+
+        uint256 second = _listReserveActivate();
+        vm.warp(block.timestamp + SLA + 1);
+        market.claimDefault(second);
+
+        (uint256 settled, uint256 defaulted,,) = _providerStats(provider);
+        assertEq(settled, 1);
+        assertEq(defaulted, 1);
+    }
 }

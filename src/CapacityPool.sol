@@ -109,9 +109,32 @@ contract CapacityPool {
         Assignment[] assignments;
     }
 
+    /// @notice Mirrors `CapacityMarket.ProviderStats` exactly — see that
+    /// struct's NatSpec for why `disputesTimedOutCount` is kept separate
+    /// from `disputesLostCount` (a timeout is a declared conservative
+    /// default, never a proven fault) and why this is a read surface, not a
+    /// decision input: `activate()`'s FIFO walk below does not consult it.
+    /// Routing by reputation (reordering or bucketing `contributions`
+    /// instead of strict oldest-first) is the real Level 6-ish change this
+    /// struct sets up but deliberately does not make — see AGENTS.md.
+    struct ProviderStats {
+        uint256 settledCount;
+        uint256 defaultedCount;
+        uint256 disputesLostCount;
+        uint256 disputesTimedOutCount;
+    }
+
+    enum ReputationEvent {
+        Settled,
+        Defaulted,
+        DisputeLost,
+        DisputeTimedOut
+    }
+
     mapping(bytes32 => PoolClass) private pools;
     uint256 public nextReservationId;
     mapping(uint256 => Reservation) private reservations;
+    mapping(address => ProviderStats) public providerStats;
 
     mapping(uint256 => mapping(uint256 => mapping(address => DisputeVote))) private disputeVotes;
     mapping(uint256 => mapping(uint256 => uint256)) private providerVoteCount;
@@ -142,6 +165,13 @@ contract CapacityPool {
     );
     event AssignmentDisputeResolved(uint256 indexed reservationId, uint256 indexed assignmentIndex, bool providerWon);
     event ContributionWithdrawn(bytes32 indexed classId, uint256 indexed index, address indexed provider, uint256 amount);
+    event ProviderStatsUpdated(
+        address indexed provider,
+        uint256 settledCount,
+        uint256 defaultedCount,
+        uint256 disputesLostCount,
+        uint256 disputesTimedOutCount
+    );
 
     error InvalidWindow();
     error WrongValue();
@@ -390,6 +420,7 @@ contract CapacityPool {
 
         a.status = AssignmentStatus.Defaulted;
         emit AssignmentDefaulted(reservationId, assignmentIndex, a.provider);
+        _recordOutcome(a.provider, ReputationEvent.Defaulted);
 
         _payout(r.buyer, a.price + a.collateral);
     }
@@ -454,6 +485,7 @@ contract CapacityPool {
 
         a.status = AssignmentStatus.Refunded;
         emit AssignmentRefunded(reservationId, assignmentIndex, r.buyer);
+        _recordOutcome(a.provider, ReputationEvent.DisputeTimedOut);
 
         _payout(r.buyer, a.price + a.collateral);
     }
@@ -511,13 +543,35 @@ contract CapacityPool {
             a.status = AssignmentStatus.Settled;
             emit AssignmentDisputeResolved(reservationId, assignmentIndex, true);
             emit AssignmentSettled(reservationId, assignmentIndex, a.provider);
+            _recordOutcome(a.provider, ReputationEvent.Settled);
             _payout(a.provider, amount);
         } else {
             a.status = AssignmentStatus.Refunded;
             emit AssignmentDisputeResolved(reservationId, assignmentIndex, false);
             emit AssignmentRefunded(reservationId, assignmentIndex, r.buyer);
+            _recordOutcome(a.provider, ReputationEvent.DisputeLost);
             _payout(r.buyer, amount);
         }
+    }
+
+    /// @notice Mirrors `CapacityMarket._recordOutcome` exactly — see that
+    /// function's NatSpec. Never called from `expireReservation` or
+    /// `withdrawContribution` (buyer/provider-initiated housekeeping, not a
+    /// performance outcome).
+    function _recordOutcome(address provider, ReputationEvent outcome) private {
+        ProviderStats storage stats = providerStats[provider];
+        if (outcome == ReputationEvent.Settled) {
+            stats.settledCount++;
+        } else if (outcome == ReputationEvent.Defaulted) {
+            stats.defaultedCount++;
+        } else if (outcome == ReputationEvent.DisputeLost) {
+            stats.disputesLostCount++;
+        } else {
+            stats.disputesTimedOutCount++;
+        }
+        emit ProviderStatsUpdated(
+            provider, stats.settledCount, stats.defaultedCount, stats.disputesLostCount, stats.disputesTimedOutCount
+        );
     }
 
     /// @notice Buyer confirms delivery of one claimed assignment, releasing
@@ -537,6 +591,7 @@ contract CapacityPool {
 
         a.status = AssignmentStatus.Settled;
         emit AssignmentSettled(reservationId, assignmentIndex, a.provider);
+        _recordOutcome(a.provider, ReputationEvent.Settled);
 
         _payout(a.provider, a.price + a.collateral);
     }
@@ -558,6 +613,7 @@ contract CapacityPool {
 
         a.status = AssignmentStatus.Settled;
         emit AssignmentSettled(reservationId, assignmentIndex, a.provider);
+        _recordOutcome(a.provider, ReputationEvent.Settled);
 
         _payout(a.provider, a.price + a.collateral);
     }

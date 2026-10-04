@@ -46,6 +46,24 @@ rebuilding. Making the commitment itself an asset (collateral-backed,
 transferable, SLA-enforced without a human referee) is the part that
 genuinely needed a smart contract, not just a database with better UX.
 
+**Not limited to security specialists — the mentor framing (2026-10-04) that
+sharpened this**: the same gap exists for any specialist whose demand is
+rare, spiky, and hard to staff for — an electrician, a structural engineer,
+a notary, a forensic auditor. Today a buyer either names one specific
+provider (who may simply not be available the one time they're needed) or
+pays a standing retainer for idle capacity. A pooled market — "4 units of
+anyone certified `ELECTRICIAN_L2`," not "Juan specifically" — is exactly
+`CapacityPool`'s `TermsClass` shape (see "New verticals are data, not
+code" below): the single-named-provider failure mode this framing worries
+about is a Level 1 (`CapacityMarket`) limitation that Level 2 already
+solves, not a gap that needs new engineering. The "reserve now, transfer
+if the incident never happens, don't pay a recurring fee for nothing"
+mechanic the framing asks for is also already built: `reserve()` +
+`transfer()` + `expireReservation()`/`withdrawContribution()` are exactly
+that path, demonstrated live on testnet (see below) for the
+security-response vertical and identical, unmodified, for an electrician
+one.
+
 ## Traction & Path Forward
 
 **Real usage, not simulated**: this isn't a UI over static data. A real
@@ -77,8 +95,10 @@ business thinking was layered on top.
 A `TermsClass` in `CapacityPool` — domain, window, SLA, price, arbitration
 panel — is the only thing that defines a specialist vertical. ZK-security
 incident response is the vertical built and tested; DFIR, pentest-on-call,
-legal/compliance response, or physical incident response (industrial,
-logistics) are the same contract, a new `TermsClass` entry. There is no
+legal/compliance response, physical incident response (industrial,
+logistics), or a non-security trade entirely — an on-call electrician, a
+structural inspector, a notary — are the same contract, a new
+`TermsClass` entry. There is no
 per-vertical smart contract to write, audit, or redeploy — which is the
 concrete answer to "why would this grow beyond one niche market."
 
@@ -111,6 +131,26 @@ deferred as a monetization decision, not an architecture one: it slots in
 at settlement points that already exist without touching the state
 machine. Naming this honestly, rather than inventing a number, is itself
 part of answering Founder & Market Readiness credibly.
+
+### Where provider reputation goes (not yet built, stated honestly)
+
+No reputation mechanism exists in the contracts today — a provider's
+history of acknowledged activations, SLA misses, and dispute outcomes is
+readable one position at a time from emitted events (`Activated`,
+`Defaulted`, dispute-vote events), but nothing aggregates it into a score,
+and nothing routes `activate()`'s FIFO fill toward higher-reputation
+contributors. This matters specifically for the "what if the named
+provider just isn't there" failure mode the pool model already solves
+structurally (above) but doesn't yet solve on *quality*: FIFO picks the
+next contributor in a `TermsClass`, not the best one. A reputation score
+derived from the same onchain events already being emitted — no new trust
+assumption, no offchain oracle — is the natural Level 6-adjacent extension,
+and the honest reason it isn't built yet is that the `activate()` routing
+function would need to change from strict FIFO to a reputation-weighted
+order, which is a real state-machine change, not a frontend addition.
+Naming this now, rather than overclaiming the FIFO queue is already
+reputation-aware, is the same discipline the revenue-model section above
+applies to fees.
 
 ## What this document is not claiming
 
