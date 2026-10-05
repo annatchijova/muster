@@ -58,15 +58,28 @@ chains:
   # HyperSync's own log-ingestion transport.
   - id: 10143
     # First block containing code at either deployed address (binary-searched
-    # via `cast code --block N`, confirmed empirically 2026-10-04 — not
-    # guessed, since the actual Level 5 deploy's broadcast file isn't
-    # present in this working tree; see README's "Live on Monad testnet"
-    # for the addresses). CapacityMarket: 67351825, CapacityPool: 67351828
-    # — three blocks apart, same deploy script run; one shared start_block
-    # covers both with no missed events.
-    start_block: 67351825
+    # via `cast code --block N`, confirmed empirically 2026-10-05 — not
+    # guessed, since the actual deploy's broadcast file isn't present in
+    # this working tree; see README's "Live on Monad testnet" for the
+    # addresses). CapacityMarket: 68451274, CapacityPool: 68451278 — four
+    # blocks apart, same deploy script run; one shared start_block covers
+    # both with no missed events.
+    #
+    # Re-pointed 2026-10-05 from the previous pair
+    # (0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364 /
+    # 0x44f305fbCF56acECe8f79Cd9773351E68634B0D5, start_block 67351825) to
+    # this one after a separate session redeployed both contracts to add
+    # `providerStats()` — the previous pair's bytecode predated that
+    # function entirely (confirmed via a raw eth_call before redeploying,
+    # per README's "Live on Monad testnet"). This is a full re-point, not
+    # an address-only edit: the previous pair has its own history (one real
+    # exercised position) that a shared sync would conflate with this
+    # fresh deployment's — if that history is ever needed again, index the
+    # old pair as a separate project/database, not by widening this one's
+    # `chains[0].contracts` to include both pairs under one start_block.
+    start_block: 68451274
     contracts:
       - name: CapacityMarket
-        address: "0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364"
+        address: "0xb2bEed70CA03F9ae86276f14aAB79F6F36f681C3"
       - name: CapacityPool
-        address: "0x44f305fbCF56acECe8f79Cd9773351E68634B0D5"
+        address: "0xA5460952b9445C2CC5daf08D4808C09f4458Aa11"

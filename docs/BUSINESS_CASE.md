@@ -147,12 +147,16 @@ part of answering Founder & Market Readiness credibly.
 A provider's track record is no longer something a judge has to take on
 faith or reconstruct from raw events by hand: both contracts now emit
 `ProviderStatsUpdated` — settled/defaulted/disputes-lost/disputes-timed-out
-counts, updated at every terminal outcome — and the Envio indexer is built
-to materialize it into a queryable `ProviderStat` row the moment a contract
-carrying that event is deployed (not yet the case for the current live
-addresses, deployed before this feature existed — see `envio/README.md`
+counts, updated at every terminal outcome — and the Envio indexer
+materializes it into a queryable `ProviderStat` row the moment a contract
+carrying that event is deployed. The currently deployed contracts do carry
+it (redeployed 2026-10-05 specifically to add it, after the previous pair
+was found to predate it entirely — see `README.md`'s "Live on Monad
+testnet"); `ProviderStat` reads 0 rows right now only because that
+deployment is genuinely brand new, with no settlements/defaults/disputes
+against it yet, not because of any structural gap — see `envio/README.md`
 "What's actually verified" for that distinction stated precisely, not
-glossed over). What's *not* built yet, stated honestly: `activate()`'s FIFO
+glossed over. What's *not* built yet, stated honestly: `activate()`'s FIFO
 fill still picks the
 next contributor in a `TermsClass`, not the best one — reputation is
 readable, not yet a routing input. This matters specifically for the "what

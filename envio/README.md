@@ -51,49 +51,60 @@ from deploy to head is roughly 840k blocks — confirmed empirically to
 converge far too slowly to be practical, not just assumed. HyperSync (and
 therefore a free API token) is the only practical path for this chain.
 
-## What's actually verified, as of 2026-10-04
+## What's actually verified
 
-Run for real, end to end, with Docker Postgres and a free `ENVIO_API_TOKEN`
-— not just code-reviewed:
+**2026-10-04, against the previous deployment (now historical — see
+"Deployment addresses indexed" below):** `npx envio codegen` and
+`npx tsc --noEmit` (`strict: true`) both clean, confirmed via `--listFiles`
+that `src/handlers/*.ts` were actually compiled; `npm run dev` synced from
+`start_block` to chain head in under 5 seconds, and a direct Postgres query
+(bypassing a local Hasura/port-8080 collision with an unrelated service on
+this machine) confirmed 2 real `Position` rows, both `Defaulted`, matching
+the live-exercised position from that deployment's history —
+`provider`/`buyer`/`domain`/`price` all correctly decoded from `Listed`,
+carried through to `Defaulted`. `PoolClass`/`Reservation`/`Assignment`
+stayed at 0, correctly: that `CapacityPool` had no live `contribute`/
+`reserve`/`activate` activity yet. `ProviderStat` also stayed at 0 — not
+"not reached yet": that deployment's bytecode (2026-10-01) predated
+`ProviderStatsUpdated` entirely (added 2026-10-04, after it), so no amount
+of re-syncing could ever have produced a row against it.
 
-- `npx envio codegen` and `npx tsc --noEmit` (`strict: true`) — both clean,
-  confirmed via `--listFiles` that `src/handlers/*.ts` were actually
-  compiled.
-- `npm run dev` — synced from the configured `start_block` to chain head in
-  under 5 seconds ("All events have been fetched... switching to realtime
-  indexing"), then queried directly against Postgres (bypassing a local
-  Hasura/port-8080 collision with an unrelated service on this machine):
-  **2 real `Position` rows**, both status `Defaulted`, matching exactly the
-  live-exercised position from `README.md`'s "Live on Monad testnet"
-  section — `provider`/`buyer`/`domain`/`price` all correctly decoded from
-  `Listed`, carried through `Reserved`/`Activated` to the final `Defaulted`
-  status written by `claimDefault`'s handler.
-- `PoolClass`/`Reservation`/`Assignment` rows: **0**, correctly — there is
-  no live `Contributed`/`reserve`/`activate` activity on the deployed Level
-  5 `CapacityPool` yet (only the earlier pre-Level-4 pair was ever
-  exercised live on `CapacityPool`), so `fetchAssignmentDetails` has not
-  been exercised against real chain data, only against the type system and
-  one isolated live `poolInfo` call (confirmed separately, decode shape
-  matches `fetchPoolTerms`'s destructuring exactly).
-- **`ProviderStat` rows: 0 — and this one is structural, not "not reached
-  yet".** The deployed `CapacityMarket`/`CapacityPool` (redeployed
-  2026-10-01 per `README.md`) predate `ProviderStatsUpdated`, which this
-  repo's `src/CapacityMarket.sol`/`CapacityPool.sol` only gained in the
-  commit that added `ProviderStats` (2026-10-04, after that deploy). The
-  live contracts' bytecode does not contain that event at all — no amount
-  of waiting or re-syncing will produce a `ProviderStat` row against the
-  currently deployed addresses. The handler is correct and will populate
-  this entity the moment a contract containing `_recordOutcome` is
-  (re)deployed and `config.yaml`'s addresses/`start_block` are updated to
-  match — but until then, 0 rows is the only correct answer, not a bug.
+**2026-10-05, re-pointed to the current deployment** (a separate session
+redeployed both contracts specifically to add `providerStats()` — see
+`README.md`'s "Live on Monad testnet"): re-ran `npx envio codegen` and
+`npx tsc --noEmit` clean against the new `config.yaml`; confirmed the ABI
+files in `abis/` still match the newly compiled contracts' events exactly
+(diff against `out/{CapacityMarket,CapacityPool}.sol/*.json`'s event
+lists — identical, since this was a redeploy of the same source, not a
+new version); ran `envio dev -r` (full reset — Envio itself refuses to
+resume with an incompatible `start_block`/address change, correctly) and
+confirmed a clean sync to realtime with **0 rows in every table** — the
+*correct* answer here, verified independently via `cast call
+nextPositionId`/`nextReservationId` against the new addresses returning
+`0`: this deployment is genuinely brand new, not yet used by anything
+(`web/`'s frontend exists now and will be what generates the first real
+activity). `ProviderStat` is no longer structurally blocked the way it was
+against the previous deployment — it will populate the first time anyone
+settles, defaults, or loses/times-out a dispute against the new contracts.
 
 ## Deployment addresses indexed
 
-| Contract | Address | Deploy block (binary-searched via `cast code`, 2026-10-04) |
+| Contract | Address | Deploy block (binary-searched via `cast code`) |
+|---|---|---|
+| `CapacityMarket` | `0xb2bEed70CA03F9ae86276f14aAB79F6F36f681C3` | 68451274 |
+| `CapacityPool` | `0xA5460952b9445C2CC5daf08D4808C09f4458Aa11` | 68451278 |
+
+**Historical** (indexed and live-exercised 2026-10-01 through 2026-10-05,
+superseded — do not re-point back to these without a plan for what happens
+to this database's existing rows, since a shared sync across both pairs
+would conflate two unrelated deployments' histories):
+
+| Contract | Address | Deploy block |
 |---|---|---|
 | `CapacityMarket` | `0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364` | 67351825 |
 | `CapacityPool` | `0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` | 67351828 |
 
-If either contract is redeployed (another Level, or a bug fix), update
-both the address and `start_block` in `config.yaml` — do not leave a stale
-address indexing a contract nobody uses anymore.
+If either contract is redeployed again (another Level, or a bug fix),
+update both the address and `start_block` in `config.yaml` and this
+table — do not leave a stale address indexing a contract nobody uses
+anymore.

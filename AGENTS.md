@@ -368,17 +368,22 @@ speculation — don't re-litigate these without new information:
   real `Position` rows**, status `Defaulted`, matching the live-exercised
   position from `README.md`'s "Live on Monad testnet" exactly.
 
-  **One real, structural finding, surfaced rather than hidden:**
-  `ProviderStat` has 0 rows, and will have 0 rows against the *currently
-  deployed* contracts regardless of how long the indexer runs — the
-  deployed `CapacityMarket`/`CapacityPool` (2026-10-01) predate
-  `ProviderStatsUpdated` (added 2026-10-04, this repo's own later commit),
-  so the live bytecode doesn't contain that event. Not a bug in the
-  indexer; will populate the moment a contract with `_recordOutcome` is
-  (re)deployed and `config.yaml` is updated to match. `PoolClass`/
-  `Reservation`/`Assignment` are also 0, correctly: no live `Contributed`/
-  `activate` activity exists on the deployed Level 5 `CapacityPool` yet.
-  See `envio/README.md` "What's actually verified" for the full trace.
+  **One real, structural finding, surfaced rather than hidden (now
+  resolved):** at the time this was first run (2026-10-04), `ProviderStat`
+  had 0 rows and could never have had any against that deployment — its
+  `CapacityMarket`/`CapacityPool` (2026-10-01) predated `ProviderStatsUpdated`
+  (added 2026-10-04, this repo's own later commit) entirely, so the live
+  bytecode didn't contain that event. **2026-10-05: a separate session
+  redeployed both contracts specifically to add `providerStats()`** (see
+  `README.md`'s "Live on Monad testnet"); `envio/config.yaml` was
+  re-pointed at the new addresses/`start_block` the same day, `envio dev -r`
+  confirmed a clean resync with 0 rows everywhere — the correct answer for
+  a genuinely brand-new deployment with no activity yet (`nextPositionId`/
+  `nextReservationId` both `0`, confirmed via `cast call`), not the
+  previous structural block. `ProviderStat` will populate the first time
+  anyone settles/defaults/loses-or-times-out a dispute against the new
+  contracts. See `envio/README.md` "What's actually verified" for the full
+  trace of both deployments.
 - **Chainlink CRE ($3k) — pursue; DONE, exercised live.** Real,
   currently-unsolved gap: `claimDefault`/`finalizeDelivery`/
   `resolveDisputeByTimeout` (and the `CapacityPool` equivalents) are
