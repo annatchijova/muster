@@ -62,6 +62,32 @@ contract CREDeadlineReceiver is ReceiverTemplate {
     CapacityMarket public immutable market;
     CapacityPool public immutable pool;
 
+    /// @notice Hard gas ceiling on each dispatched action, independent of
+    /// batch size or position in it. Fixes a Round 2 security audit finding
+    /// (docs/SECURITY_AUDIT_ROUND2_2026-10-05.md, F4): without an explicit
+    /// per-call cap, `onReport`'s fixed total gas budget
+    /// (`gasLimit = 50_000 + 150_000 * actions.length` in
+    /// `muster-cre/deadline-keeper/workflow.ts`) is a *shared* pool — a
+    /// single due position/assignment whose buyer or provider is a contract
+    /// with a gas-consuming `receive()` could, via `try`'s default
+    /// all-remaining-gas forwarding, consume far more than its "share" and
+    /// starve every sibling action in the same batch, reverting the entire
+    /// transaction. Measured 2026-10-05 against this commit: the six
+    /// dispatched functions cost 83k-106k gas in their normal (non-reverting)
+    /// path; 200_000 leaves ~2x headroom over the worst observed case while
+    /// still bounding a malicious `receive()` to strictly its own stipend —
+    /// it can never draw from gas earmarked for another action, because
+    /// `{gas: ACTION_GAS_STIPEND}` on the call expression itself is an upper
+    /// bound on what the EVM forwards, not merely a default. A capped action
+    /// that runs out of gas still fails cleanly (`ok = false`, caught by
+    /// `try/catch` below, same as any other failed action) — this never
+    /// introduces a new way to lose funds, only closes the cross-action
+    /// starvation path. Must be kept in sync by hand with
+    /// `workflow.ts`'s per-action share of `gasLimit` (same convention
+    /// already used there for mirroring the `Action` enum) — see that
+    /// file's comment at the `gasLimit` calculation.
+    uint256 public constant ACTION_GAS_STIPEND = 200_000;
+
     /// @notice One event per attempted action, win or lose. A `false`
     /// `success` is expected and routine — e.g. someone else already called
     /// the same deadline function first, or the position moved on before
@@ -91,40 +117,44 @@ contract CREDeadlineReceiver is ReceiverTemplate {
     /// already-resolved entry in a batch never blocks the rest — the same
     /// honest-degradation principle the rest of this project applies to
     /// partial failures (a timed-out assignment's default not blocking a
-    /// sibling's settlement, etc.).
+    /// sibling's settlement, etc.). Every call below is capped at
+    /// `ACTION_GAS_STIPEND` — see that constant's NatSpec for why: without
+    /// the cap, "independently" was only true for failure *reasons*, not for
+    /// gas, since `try` without an explicit `gas:` forwards up to all
+    /// remaining gas to the callee by default.
     function _attempt(DeadlineAction memory a) private returns (bool ok) {
         if (a.action == Action.MarketClaimDefault) {
-            try market.claimDefault(a.id) {
+            try market.claimDefault{gas: ACTION_GAS_STIPEND}(a.id) {
                 ok = true;
             } catch {
                 ok = false;
             }
         } else if (a.action == Action.MarketFinalizeDelivery) {
-            try market.finalizeDelivery(a.id) {
+            try market.finalizeDelivery{gas: ACTION_GAS_STIPEND}(a.id) {
                 ok = true;
             } catch {
                 ok = false;
             }
         } else if (a.action == Action.MarketResolveDisputeByTimeout) {
-            try market.resolveDisputeByTimeout(a.id) {
+            try market.resolveDisputeByTimeout{gas: ACTION_GAS_STIPEND}(a.id) {
                 ok = true;
             } catch {
                 ok = false;
             }
         } else if (a.action == Action.PoolClaimAssignmentDefault) {
-            try pool.claimAssignmentDefault(a.id, a.subId) {
+            try pool.claimAssignmentDefault{gas: ACTION_GAS_STIPEND}(a.id, a.subId) {
                 ok = true;
             } catch {
                 ok = false;
             }
         } else if (a.action == Action.PoolFinalizeAssignmentDelivery) {
-            try pool.finalizeAssignmentDelivery(a.id, a.subId) {
+            try pool.finalizeAssignmentDelivery{gas: ACTION_GAS_STIPEND}(a.id, a.subId) {
                 ok = true;
             } catch {
                 ok = false;
             }
         } else if (a.action == Action.PoolResolveAssignmentDisputeByTimeout) {
-            try pool.resolveAssignmentDisputeByTimeout(a.id, a.subId) {
+            try pool.resolveAssignmentDisputeByTimeout{gas: ACTION_GAS_STIPEND}(a.id, a.subId) {
                 ok = true;
             } catch {
                 ok = false;

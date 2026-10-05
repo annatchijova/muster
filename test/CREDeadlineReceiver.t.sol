@@ -8,6 +8,18 @@ import {CREDeadlineReceiver} from "../src/CREDeadlineReceiver.sol";
 import {IReceiver} from "../src/cre/IReceiver.sol";
 import {ReceiverTemplate} from "../src/cre/ReceiverTemplate.sol";
 
+/// @notice Minimal malicious payout recipient for the F4 regression test
+/// below: consumes however much gas it's forwarded, however much that is,
+/// and never returns — the worst case `ACTION_GAS_STIPEND` has to survive.
+contract GasGuzzler {
+    receive() external payable {
+        uint256 x;
+        while (true) {
+            x += 1;
+        }
+    }
+}
+
 contract CREDeadlineReceiverTest is Test {
     CapacityMarket market;
     CapacityPool pool;
@@ -177,6 +189,82 @@ contract CREDeadlineReceiverTest is Test {
         CREDeadlineReceiver.DeadlineAction[] memory actions = new CREDeadlineReceiver.DeadlineAction[](0);
         vm.prank(forwarder);
         receiver.onReport("", abi.encode(actions)); // must not revert
+    }
+
+    // --- Regression: docs/SECURITY_AUDIT_ROUND2_2026-10-05.md finding F4 --
+    // A gas-consuming receive() must never be able to starve a sibling
+    // action's gas within the same batch, under the exact tight gas budget
+    // `muster-cre/deadline-keeper/workflow.ts` actually submits
+    // (50_000 + 220_000 * actions.length, post-fix).
+
+    function test_onReport_gas_guzzling_sibling_does_not_starve_batch_under_tight_gas() public {
+        uint256 guzzlerPosition = _marketPositionPastActivationDeadlineFor(payable(address(new GasGuzzler())));
+        uint256 normalPosition = _marketPositionPastActivationDeadline();
+
+        CREDeadlineReceiver.DeadlineAction[] memory actions = new CREDeadlineReceiver.DeadlineAction[](2);
+        actions[0] =
+            CREDeadlineReceiver.DeadlineAction({action: CREDeadlineReceiver.Action.MarketClaimDefault, id: guzzlerPosition, subId: 0});
+        actions[1] =
+            CREDeadlineReceiver.DeadlineAction({action: CREDeadlineReceiver.Action.MarketClaimDefault, id: normalPosition, subId: 0});
+        bytes memory report = abi.encode(actions);
+
+        // The exact production formula for a 2-action batch (workflow.ts)
+        // — not a generous test-only budget.
+        uint256 productionGasLimit = 50_000 + 2 * 220_000;
+
+        uint256 buyerBefore = buyer.balance;
+        vm.prank(forwarder);
+        receiver.onReport{gas: productionGasLimit}("", report); // must NOT revert
+
+        (,,,,,,,,,,,,, CapacityMarket.Status guzzlerStatus) = market.positions(guzzlerPosition);
+        (,,,,,,,,,,,,, CapacityMarket.Status normalStatus) = market.positions(normalPosition);
+
+        // The guzzler's own action fails cleanly (it always could, pre-fix
+        // too — self-griefing, never a counterparty's, per AGENTS.md).
+        assertEq(uint8(guzzlerStatus), uint8(CapacityMarket.Status.Activated), "guzzler's own default still fails");
+        // What the fix actually guarantees: the sibling is UNAFFECTED.
+        assertEq(uint8(normalStatus), uint8(CapacityMarket.Status.Defaulted), "sibling must still succeed");
+        assertEq(buyer.balance, buyerBefore + PRICE + COLLATERAL, "sibling's payout must still land");
+    }
+
+    /// @notice Harder version: TWO gas-guzzling siblings in the same batch
+    /// as one legitimate action. Each guzzler is independently capped at
+    /// ACTION_GAS_STIPEND, so the arithmetic must still work out regardless
+    /// of how many malicious entries are mixed in, not just one.
+    function test_onReport_multiple_gas_guzzlers_still_do_not_starve_the_legit_action() public {
+        uint256 guzzler1 = _marketPositionPastActivationDeadlineFor(payable(address(new GasGuzzler())));
+        uint256 guzzler2 = _marketPositionPastActivationDeadlineFor(payable(address(new GasGuzzler())));
+        uint256 normalPosition = _marketPositionPastActivationDeadline();
+
+        CREDeadlineReceiver.DeadlineAction[] memory actions = new CREDeadlineReceiver.DeadlineAction[](3);
+        actions[0] = CREDeadlineReceiver.DeadlineAction({action: CREDeadlineReceiver.Action.MarketClaimDefault, id: guzzler1, subId: 0});
+        actions[1] = CREDeadlineReceiver.DeadlineAction({action: CREDeadlineReceiver.Action.MarketClaimDefault, id: guzzler2, subId: 0});
+        actions[2] =
+            CREDeadlineReceiver.DeadlineAction({action: CREDeadlineReceiver.Action.MarketClaimDefault, id: normalPosition, subId: 0});
+        bytes memory report = abi.encode(actions);
+
+        uint256 productionGasLimit = 50_000 + 3 * 220_000;
+
+        uint256 buyerBefore = buyer.balance;
+        vm.prank(forwarder);
+        receiver.onReport{gas: productionGasLimit}("", report);
+
+        (,,,,,,,,,,,,, CapacityMarket.Status normalStatus) = market.positions(normalPosition);
+        assertEq(uint8(normalStatus), uint8(CapacityMarket.Status.Defaulted), "legit action survives two guzzlers");
+        assertEq(buyer.balance, buyerBefore + PRICE + COLLATERAL);
+    }
+
+    function _marketPositionPastActivationDeadlineFor(address payable buyer_) internal returns (uint256 positionId) {
+        vm.deal(buyer_, 10 ether);
+        vm.prank(provider);
+        positionId = market.listCapacity{value: COLLATERAL}(
+            DOMAIN, 4, validFrom, validUntil, SLA, DISPUTE_WINDOW, NO_PANEL, 0, PRICE
+        );
+        vm.prank(buyer_);
+        market.reserve{value: PRICE}(positionId);
+        vm.prank(buyer_);
+        market.activate(positionId);
+        vm.warp(block.timestamp + SLA + 1);
     }
 
     // --- Inherited from ReceiverTemplate: the forwarder is rotatable -----

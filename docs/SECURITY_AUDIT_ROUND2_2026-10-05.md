@@ -51,7 +51,7 @@ CODE FACT · PLAUSIBLE HYPOTHESIS · **CONFIRMED BY INDUCTION** · FALSIFIED
 
 | ID | Severity | Level | Module | Finding | Status |
 |----|----------|-------|--------|---------|--------|
-| F4 | **Medium-High** | CONFIRMED BY INDUCTION | `CREDeadlineReceiver` + `deadline-keeper` | A single gas-guzzling due position, batched by the workflow alongside any other due action, exhausts the fixed per-batch gas budget and reverts the *entire* transaction — denying automated settlement to every sibling action, indefinitely, at zero ongoing cost to the attacker | **OPEN** |
+| F4 | **Medium-High** | CONFIRMED BY INDUCTION | `CREDeadlineReceiver` + `deadline-keeper` | A single gas-guzzling due position, batched by the workflow alongside any other due action, exhausts the fixed per-batch gas budget and reverts the *entire* transaction — denying automated settlement to every sibling action, indefinitely, at zero ongoing cost to the attacker | **FIXED, same day** |
 | F5 | Low (hygiene) | PLAUSIBLE HYPOTHESIS | `ReceiverTemplate`/`CREDeadlineReceiver` | Optional workflow-identity pinning (`s_expectedAuthor`/`WorkflowId`/`Name`) is never configured — `onReport` accepts any report relayed through the production Forwarder, not only MUSTER's own workflow | **OPEN, discarded as non-exploitable** |
 
 No findings against the Level 4/5 panel mechanism itself beyond what its
@@ -238,17 +238,48 @@ read — one experiment run, one result recorded:
 | Panel member double-counted across sibling assignments from the same `TermsClass`/reservation | Not exploitable | `disputeVotes`/`providerVoteCount`/`buyerVoteCount` in `CapacityPool` are keyed by `(reservationId, assignmentIndex)`, not just `reservationId` or `classId` — confirmed by reading every mapping declaration and every call site; a member must vote separately on each disputed assignment. |
 | Provider-as-panel-member self-dealing on their own disputed assignment | Already an accepted, documented trust gap (`AGENTS.md`: "no `require(member != provider)`... trivially bypassed"), not a new finding this round | Re-verified the NatSpec's own reasoning holds (a second colluding address bypasses any such check trivially) rather than re-discovering it as new. |
 
-## Recommendations (out of scope of this round — record only)
+## Remediation
 
-- **F4**: the cleanest fix is making `_attempt` cap each dispatched call's
-  *own* gas explicitly (e.g. a low-level `.call` with a fixed per-action
-  gas stipend sized generously above normal cost but below "can starve a
-  sibling"), rather than letting one action's external call draw from a
-  shared, unbounded-per-action pool. This is a real design decision (how
-  to size the cap without under-provisioning a legitimately
-  slightly-more-expensive action, e.g. one with a longer panel-vote path)
-  — worth doing deliberately, not as a reflexive patch.
-- **F5**: call `setExpectedWorkflowId` (and optionally `setExpectedAuthor`)
-  once after deployment, pinned to the actual `deadline-keeper` workflow's
-  real ID — cheap, and removes the need to re-argue F5's "discarded"
-  reasoning in a future audit.
+**F4 — fixed same day, same session, before any re-deploy to Monad testnet.**
+
+`CREDeadlineReceiver` now declares `uint256 public constant
+ACTION_GAS_STIPEND = 200_000` and every one of the six dispatched calls in
+`_attempt` is capped via `{gas: ACTION_GAS_STIPEND}` on the call
+expression itself — Solidity's `try X.f{gas: N}(...)` forwards *at most*
+`N`, not "all remaining minus the EIP-150 reserve," so a malicious
+`receive()` can never again draw more than its own fixed stipend, no
+matter how it's written or how many other actions share the batch. 200,000
+was chosen from measured data, not guessed: the six dispatched functions
+cost 82,814–106,399 gas in their normal path against this commit (measured
+2026-10-05 via isolated `gasleft()` deltas, not whole-test gas which
+includes setup overhead), leaving roughly 2x headroom over the worst
+observed case (`claimAssignmentDefault`, 106,399 gas).
+
+`muster-cre/deadline-keeper/workflow.ts`'s `gasLimit` formula moved from
+`50_000 + 150_000 × N` to `50_000 + 220_000 × N` — the per-action share
+must stay above `ACTION_GAS_STIPEND` plus loop/dispatch overhead
+(array-slot decode, the `try/catch` wrapper itself, the `ActionAttempted`
+emit) for the arithmetic to hold under *any* mix of actions, not just the
+single-guzzler case originally found. The two numbers (`ACTION_GAS_STIPEND`
+in Solidity, the per-action multiplier in TypeScript) must be kept in sync
+by hand — flagged explicitly in both files' comments, the same convention
+this codebase already uses for mirroring the `Action` enum between them.
+
+**Verified by induction, not just by re-reading the fix:**
+
+| Test | Scenario | Result |
+|---|---|---|
+| `test_onReport_gas_guzzling_sibling_does_not_starve_batch_under_tight_gas` | 1 guzzler + 1 legit action, exact production formula (`50_000 + 2×220_000`) | **PASS** — guzzler's own action still fails cleanly (unchanged, self-griefing only); sibling succeeds and is paid |
+| `test_onReport_multiple_gas_guzzlers_still_do_not_starve_the_legit_action` | 2 guzzlers + 1 legit action, exact production formula for N=3 | **PASS** — legit action survives two simultaneous attackers in the same batch, not just one |
+
+Both committed to `test/CREDeadlineReceiver.t.sol` as permanent regression
+tests (11/11 in that file, 118/118 total Solidity tests). The
+`deadline-keeper` workflow's own suite (5/5, `bun test`) and `tsc --noEmit`
+both still pass unchanged against the new formula.
+
+**F5 — left open, as hygiene, not re-opened as part of this fix.** Calling
+`setExpectedWorkflowId` (and optionally `setExpectedAuthor`) once after
+deployment, pinned to the actual `deadline-keeper` workflow's real ID,
+remains a cheap, worthwhile hardening step — tracked in `TODO.md`, not
+done in this pass since it requires a live deployment action (calling an
+`onlyOwner` setter against the production receiver), not a code change.

@@ -123,13 +123,19 @@ export const onCronTrigger = (runtime: Runtime<Config>): string => {
 
 	const reportPayload = encodeAbiParameters(DEADLINE_ACTION_ARRAY_ABI, [actions])
 
-	// Per-action gas is dominated by one of six simple state-transition calls
-	// on CapacityMarket/CapacityPool (status check, a payout, an event) —
-	// 150k each is a conservative ceiling with real headroom, plus a fixed
-	// 50k base for onReport's own dispatch loop overhead. Not tuned against
-	// a live gas profile yet; revisit once this runs against mainnet traffic
-	// instead of a handful of demo positions.
-	const gasLimit = (50_000n + BigInt(actions.length) * 150_000n).toString()
+	// Per-action share MUST stay >= CREDeadlineReceiver.ACTION_GAS_STIPEND
+	// (src/CREDeadlineReceiver.sol) + headroom for that action's own loop/
+	// dispatch overhead (array decode slice, try/catch wrapper, the
+	// ActionAttempted emit) — keep these two numbers in sync by hand, same
+	// convention already used for mirroring the Action enum above. Sized
+	// this way specifically so that even a worst-case malicious action
+	// (hard-capped at ACTION_GAS_STIPEND onchain, however many of those end
+	// up in one batch) can never eat into the gas earmarked for a sibling —
+	// see docs/SECURITY_AUDIT_ROUND2_2026-10-05.md finding F4 for why this
+	// used to be 150_000n with no onchain cap, and why that was exploitable.
+	// Measured 2026-10-05: the six dispatched functions cost 83k-106k gas in
+	// their normal path, comfortably under the 200k stipend.
+	const gasLimit = (50_000n + BigInt(actions.length) * 220_000n).toString()
 	const writeResult = receiver.writeReport(runtime, reportPayload, { gasLimit })
 
 	if (writeResult.txStatus !== TxStatus.SUCCESS) {

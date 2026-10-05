@@ -20,12 +20,12 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
   `deadline-keeper` workflow**: automates the six deliberately-permissionless
   deadline functions (`claimDefault`/`finalizeDelivery`/
   `resolveDisputeByTimeout` and their `CapacityPool` equivalents) instead of
-  requiring someone to remember to call them. 9/9 Solidity tests, 5/5
+  requiring someone to remember to call them. 11/11 Solidity tests, 5/5
   workflow tests, and exercised live end-to-end on Monad testnet (see "Live
   on Monad testnet" below and "Sponsor integration — Chainlink CRE" further
   down this document).
 
-116/116 Solidity tests passing total (including `test/RedTeam.t.sol`'s
+118/118 Solidity tests passing total (including `test/RedTeam.t.sol`'s
 6-test regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three
 confirmed and fixed findings) plus 5/5 CRE workflow tests. Six generations
 of `CapacityMarket`/`CapacityPool` deploy to Monad testnet (chain id
@@ -715,9 +715,9 @@ forge build
 forge test
 ```
 
-Last run: 116/116 Solidity tests passed (`CapacityMarket.t.sol`: 51,
+Last run: 118/118 Solidity tests passed (`CapacityMarket.t.sol`: 51,
 `CapacityPool.t.sol`: 50, `RedTeam.t.sol`: 6,
-`CREDeadlineReceiver.t.sol`: 9). Plus the CRE workflow's own suite —
+`CREDeadlineReceiver.t.sol`: 11). Plus the CRE workflow's own suite —
 `cd muster-cre/deadline-keeper && bun test` — 5/5 passing, run against real
 on-chain data where the test exercises reads, and against the SDK's test
 mocks where it exercises the decode/dispatch logic (see "The workflow

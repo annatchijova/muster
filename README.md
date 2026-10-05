@@ -163,7 +163,7 @@ contracts — not a bug, the deployed bytecode predates the
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`, `src/CREDeadlineReceiver.sol`), plus the
   `muster-cre/` Chainlink CRE workflow project (TypeScript).
-- 116/116 Solidity tests passing (`test/`) plus 5/5 CRE workflow tests
+- 118/118 Solidity tests passing (`test/`) plus 5/5 CRE workflow tests
   (`muster-cre/deadline-keeper`), covering all five levels' lifecycles,
   every invariant violation, the CRE receiver's dispatch logic, and a
   permanent regression suite for the red-team findings below.
