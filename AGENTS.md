@@ -435,6 +435,27 @@ speculation — don't re-litigate these without new information:
   `2183018362218727504`, `chainSelectorName: "monad-testnet"` (confirmed
   against the installed `@chainlink/cre-sdk`'s own network registry, not
   assumed).
+
+  **Security audit round 2 (2026-10-05):** `docs/SECURITY_AUDIT_ROUND2_2026-10-05.md`
+  — first dedicated adversarial pass on Level 4/5 panels and this CRE
+  integration (round 1 predates both). One open finding, CONFIRMED BY
+  INDUCTION, not yet fixed: `CREDeadlineReceiver.onReport`'s batch runs
+  under a fixed `gasLimit = 50_000 + 150_000 * actions.length`
+  (`workflow.ts:132`); a single due position whose buyer/provider is a
+  contract with a gas-consuming `receive()` can exhaust that shared budget
+  and revert the **entire** batch, denying automated enforcement to every
+  sibling action in it — reproduced with the exact production gas formula,
+  with a control proving two ordinary actions fit the same budget
+  comfortably. Not fund loss (every dispatched function stays
+  permissionlessly callable directly, bypassing the batch) and not
+  permanent, but persistent and free for the attacker to sustain
+  indefinitely (their own position simply never resolves). Fix needs a
+  real design decision (per-action gas capping in `_attempt`, sized
+  without under-provisioning a legitimately pricier action) — do not patch
+  reflexively; see the audit's "Recommendations" section before touching
+  `_attempt`. The panel mechanism itself re-verified clean under adversarial
+  voting (exhausted unanimous panel still falls through to the timeout
+  path, confirmed by induction) — no new panel finding this round.
 - **Mera ($2.5k) — blocked on frontend, not architecture.** Mera derives a
   plain EOA private key client-side from a passkey (WebAuthn PRF) — no
   smart-contract account, no bundler, no changes needed to our contracts at
