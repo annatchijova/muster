@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MUSTER</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1>MUSTER<span class="badge">Monad testnet</span></h1>
+        <p class="tagline">Capacity positions, live against chain id 10143.</p>
+      </div>
+      <div class="topbar-right">
+        <button id="theme-toggle" class="icon-btn" title="Toggle theme" type="button">&#9789;</button>
+        <span id="wallet-status" class="wallet-status">Not signed in</span>
+        <button id="wallet-signin" type="button">Sign in with passkey</button>
+        <button id="wallet-register" class="secondary" type="button">Register new passkey</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="market" type="button">Market (L1)</button>
+      <button class="tab-btn" data-tab="pool" type="button">Pool (L2)</button>
+      <button class="tab-btn" data-tab="reputation" type="button">Reputation</button>
+    </nav>
+
+    <main>
+      <section id="tab-market" class="tab-panel active"></section>
+      <section id="tab-pool" class="tab-panel"></section>
+      <section id="tab-reputation" class="tab-panel"></section>
+    </main>
+
+    <div id="toast-root" class="toast-root" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

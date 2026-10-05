@@ -178,32 +178,46 @@ forge test
 
 ## Live on Monad testnet
 
-Redeployed 2026-10-01 after adding Level 5 (`panelMembers`/
-`panelThreshold` replaced the single `arbitrator` field, changing the ABI
-again). Current, Sourcify-verified (`exact_match`) contracts:
+Redeployed 2026-10-05 to add `providerStats` (the previous Level 5 pair
+predated that function entirely — `providerStats(address)` reverted
+against it, a real selector-not-found, confirmed via a raw `eth_call`
+before redeploying, not assumed). Same Level 5 ABI otherwise. Current,
+Sourcify-verified (`exact_match`) contracts:
 
 | Contract | Address |
 |---|---|
-| `CapacityMarket` | `0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364` |
-| `CapacityPool` | `0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` |
+| `CapacityMarket` | `0xb2bEed70CA03F9ae86276f14aAB79F6F36f681C3` |
+| `CapacityPool` | `0xA5460952b9445C2CC5daf08D4808C09f4458Aa11` |
 
-**Exercised live**: a position was listed/reserved/activated with a
-45-second SLA, then automatically defaulted by the CRE workflow once it
-lapsed — `Defaulted` event, position status confirmed onchain afterward.
-
-**`CREDeadlineReceiver` instances** (Sourcify-verified, `match`/partial —
-expected with baked-in immutable constructor values, not a red flag):
+**`CREDeadlineReceiver` instances redeployed alongside it** (same day,
+pointing at the pair above; Sourcify-verified `match`), now including the
+F4 gas-stipend fix (`docs/SECURITY_AUDIT_ROUND2_2026-10-05.md`):
 
 | Role | Address | Trusts |
 |---|---|---|
-| Production | `0x544e73b2478B45c46b11E86dFaF07065F596fd05` | Real Monad testnet `KeystoneForwarder` |
-| Mock-forwarder staging | `0xD8979A669b360cb02c8bAC95065669f609aFA5b0` | Mock `KeystoneForwarder` — what local `cre workflow simulate --broadcast` actually talks to |
+| Production | `0x7B9d3D1e58AFca458226235Ab2366B4BF36407dD` | Real Monad testnet `KeystoneForwarder` |
+| Mock-forwarder staging | `0x28f794F0aFB563118C1ec476Dc304cc303BA9b2A` | Mock `KeystoneForwarder` — what local `cre workflow simulate --broadcast` actually talks to |
+
+`muster-cre/deadline-keeper/config.production.json` and
+`config.staging.json` were updated to match; the live CRE exercise
+described below ran against the *previous* pair, before this redeploy —
+see that pair's row in the history table for the preserved record of it.
+
+**Known gap from this redeploy, not yet closed:** `envio/config.yaml`
+still indexes the previous (now-historical) `CapacityMarket`/
+`CapacityPool` pair — the Envio indexer was built and live-exercised
+against that pair (see `envio/README.md`) and has not been re-pointed at
+the pair above. Re-pointing means new `start block`s for the new
+addresses and a fresh local sync, not just an address swap — left for a
+deliberate follow-up rather than done reflexively here.
 
 **Earlier deploys, kept live and verified as this project's audit trail —
 do not send value to any of them:**
 
 | Contract | Address | Why it's stale |
 |---|---|---|
+| `CapacityMarket` | `0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364` | Level 5, pre-`providerStats` — exercised live end-to-end including the CRE-automated default path (a position listed/reserved/activated with a 45-second SLA, then automatically defaulted once it lapsed — `Defaulted` event, status confirmed onchain). Also what `envio/`'s live indexer sync above still points at. |
+| `CapacityPool` | `0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` | Same, Level 5 pre-`providerStats`. |
 | `CapacityMarket` | `0x1224950b84a86f57cB4AE838D372879960862896` | Level 4 (single `arbitrator` field, not the panel) — not exercised live. |
 | `CapacityPool` | `0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` | Same, Level 4. |
 | `CapacityMarket` | `0xD3cfAAaa8159146ed2281EBD87911AF5b683cE8f` | Pre-Level-4: patched (F1/F2/F3), exercised end-to-end live — list → reserve → activate → accept → claim delivery → settle, real MON. Provider collected exactly `price + collateral` (`0.07 MON`), contract balance returned to `0`. Representative tx hashes: `listCapacity` 0x2ef9c44c…ed23b, `claimDelivery` 0xeb6f1522…d709, `settle` 0xddf84f28…dd99. |

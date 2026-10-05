@@ -27,21 +27,29 @@ Track: **Onchain Finance & Trading** (Monad hackathon, Sep 1 – Oct 13).
 
 118/118 Solidity tests passing total (including `test/RedTeam.t.sol`'s
 6-test regression suite for `docs/SECURITY_AUDIT_2026-10-01.md`'s three
-confirmed and fixed findings) plus 5/5 CRE workflow tests. Six generations
-of `CapacityMarket`/`CapacityPool` deploy to Monad testnet (chain id
-10143), all kept live and verified as this project's own audit trail — see
-`README.md`'s "Live on Monad testnet" for every address and which is
-current. Current (Level 5): `CapacityMarket` at
-`0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364`, `CapacityPool` at
-`0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` — **exercised live**: a real
-position was listed, reserved, and activated with a short SLA, then
-automatically defaulted by the CRE workflow once the deadline passed,
-confirmed by the `Defaulted` event and the position's onchain status. The
-prior pair (Level 4, single `arbitrator` field) was never exercised live;
-the pair before that (pre-Level-4, patched) was exercised end-to-end with
-real MON by hand; everything before that is the still-vulnerable pre-audit
-deploy. Not independently audited beyond this project's own red-team pass.
-Not deployed to mainnet.
+confirmed and fixed findings) plus 5/5 CRE workflow tests. Seven
+generations of `CapacityMarket`/`CapacityPool` deploy to Monad testnet
+(chain id 10143), all kept live and verified as this project's own audit
+trail — see `README.md`'s "Live on Monad testnet" for every address and
+which is current. Current: `CapacityMarket` at
+`0xb2bEed70CA03F9ae86276f14aAB79F6F36f681C3`, `CapacityPool` at
+`0xA5460952b9445C2CC5daf08D4808C09f4458Aa11` — redeployed 2026-10-05 to add
+`providerStats` (the prior pair's bytecode predated that function; its
+selector reverted, confirmed via a raw `eth_call` before redeploying).
+`providerStats` is now confirmed callable on this pair, but it has not yet
+had its own live lifecycle exercise — that record belongs to the
+*previous* Level 5 pair (same ABI otherwise): a real position was listed,
+reserved, and activated with a short SLA, then automatically defaulted by
+the CRE workflow once the deadline passed, confirmed by the `Defaulted`
+event and the position's onchain status. The pair before that (Level 4,
+single `arbitrator` field) was never exercised live; the pair before that
+(pre-Level-4, patched) was exercised end-to-end with real MON by hand;
+everything before that is the still-vulnerable pre-audit deploy.
+`envio/`'s live-synced indexer still points at the previous (pre-redeploy)
+pair, not the current one — see `README.md`'s "Live on Monad testnet" for
+that gap. Not independently audited beyond this project's own two
+red-team passes (`docs/SECURITY_AUDIT_2026-10-01.md`,
+`docs/SECURITY_AUDIT_ROUND2_2026-10-05.md`). Not deployed to mainnet.
 
 **What "deployed" means here, for the pairs that were actually
 exercised:** those contracts were run end-to-end on the live testnet — `listCapacity` →
@@ -633,16 +641,23 @@ sibling's settlement. Tests:
 Deployed via `script/DeployCREReceiver.s.sol`, wired to the Monad testnet
 production `KeystoneForwarder`
 (`0xF8344CFd5c43616a4366C34E3EEE75af79a74482`, confirmed against
-docs.chain.link's forwarder directory) and the current Level 5
+docs.chain.link's forwarder directory) and the current
 `CapacityMarket`/`CapacityPool` addresses:
 
 | Instance | Address | Trusted forwarder | Use |
 |---|---|---|---|
-| Production | `0x544e73b2478B45c46b11E86dFaF07065F596fd05` | Real `KeystoneForwarder` | What a real deployed DON workflow talks to |
-| Mock-forwarder staging | `0xD8979A669b360cb02c8bAC95065669f609aFA5b0` | Mock `KeystoneForwarder` (`0xB9F79d863261869B234c481D1f9A7af84AeAd192`) | What local `cre workflow simulate --broadcast` talks to — see below for why a second instance exists |
+| Production | `0x7B9d3D1e58AFca458226235Ab2366B4BF36407dD` | Real `KeystoneForwarder` | What a real deployed DON workflow talks to |
+| Mock-forwarder staging | `0x28f794F0aFB563118C1ec476Dc304cc303BA9b2A` | Mock `KeystoneForwarder` (`0xB9F79d863261869B234c481D1f9A7af84AeAd192`) | What local `cre workflow simulate --broadcast` talks to — see below for why a second instance exists |
 
-Both Sourcify-verified. `config.staging.json` points at the mock-forwarder
-instance; `config.production.json` at the real one.
+Both Sourcify-verified, redeployed 2026-10-05 alongside the
+`CapacityMarket`/`CapacityPool` pair above (also including the F4
+gas-stipend fix below). `config.staging.json` points at the
+mock-forwarder instance; `config.production.json` at the real one. The
+live end-to-end exercise described next ran against the *previous*
+receiver pair (`0x544e73b2478B45c46b11E86dFaF07065F596fd05` /
+`0xD8979A669b360cb02c8bAC95065669f609aFA5b0`, same `ReceiverTemplate`
+logic, pre-F4) — see `README.md`'s "Live on Monad testnet" for that
+pair's preserved record.
 
 ### The workflow itself — built, tested, and run live against Monad testnet
 

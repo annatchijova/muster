@@ -10,8 +10,9 @@ import {CREDeadlineReceiver} from "../src/CREDeadlineReceiver.sol";
 /// --rpc-url monad_testnet --broadcast --verify ...` — see README "Chainlink
 /// CRE: automated deadline enforcement".
 ///
-/// Addresses below are current as of 2026-10-01 — re-check both before
-/// relying on this script if time has passed:
+/// Addresses below are current as of 2026-10-05 (redeployed to add
+/// ProviderStats — see README.md "Live on Monad testnet" history) — re-check
+/// both before relying on this script if time has passed:
 ///   - CapacityMarket/CapacityPool: README.md "Live on Monad testnet",
 ///     "Current" row.
 ///   - KeystoneForwarder: docs.chain.link/cre/guides/workflow/using-evm-client/forwarder-directory-ts,
@@ -20,8 +21,8 @@ import {CREDeadlineReceiver} from "../src/CREDeadlineReceiver.sol";
 ///     is deliberately NOT what this script deploys against — this deploys
 ///     the receiver that a *real* deployed workflow talks to.
 contract DeployCREReceiver is Script {
-    address constant CAPACITY_MARKET = 0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364;
-    address constant CAPACITY_POOL = 0x44f305fbCF56acECe8f79Cd9773351E68634B0D5;
+    address constant CAPACITY_MARKET = 0xb2bEed70CA03F9ae86276f14aAB79F6F36f681C3;
+    address constant CAPACITY_POOL = 0xA5460952b9445C2CC5daf08D4808C09f4458Aa11;
     address constant MONAD_TESTNET_KEYSTONE_FORWARDER = 0xF8344CFd5c43616a4366C34E3EEE75af79a74482;
 
     function run() external returns (CREDeadlineReceiver receiver) {
