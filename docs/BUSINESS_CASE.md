@@ -73,14 +73,24 @@ workflow — not a human, not a script run by hand — read the chain, found
 the breach, and submitted the report that made `CapacityMarket` emit
 `Defaulted`. That is the "handful of test trades" bar the rubric names,
 cleared with the automated-enforcement path exercised end-to-end, which is
-the harder path to demonstrate than a plain happy-path settlement.
+the harder path to demonstrate than a plain happy-path settlement. A second,
+independent system confirms the same claim from outside this project's own
+test suite: the Envio HyperIndex indexer (`envio/`), synced live against
+Monad testnet, read that exact position back from the chain as `Defaulted`
+into its own Postgres store (the same data its GraphQL API serves) — not
+re-asserted by the same code that produced it.
 
 **Specific next step**: run a pilot with 2-3 real security boutiques/DAOs
 post-hackathon, listing and reserving real (not synthetic) capacity on
 testnet, before any mainnet fee-capture launch. That sequencing — real
 counterparties on testnet first, revenue mechanism second — is the
 concrete, checkable claim a judge can ask about, instead of a generic
-"we'll grow users" line.
+"we'll grow users" line. Security response is the first pilot vertical
+deliberately, not the only one the architecture supports (see "Not limited
+to security specialists" above) — a named, narrow first cohort is a
+stronger, more checkable claim than "any specialist, anywhere," and the
+same `TermsClass` mechanism extends to a second vertical without
+re-architecting once the first pilot validates the mechanics.
 
 ## How the architecture supports that claim (not a separate pitch)
 
@@ -132,25 +142,29 @@ at settlement points that already exist without touching the state
 machine. Naming this honestly, rather than inventing a number, is itself
 part of answering Founder & Market Readiness credibly.
 
-### Where provider reputation goes (not yet built, stated honestly)
+### Where provider reputation goes (tracked today, not yet routed on)
 
-No reputation mechanism exists in the contracts today — a provider's
-history of acknowledged activations, SLA misses, and dispute outcomes is
-readable one position at a time from emitted events (`Activated`,
-`Defaulted`, dispute-vote events), but nothing aggregates it into a score,
-and nothing routes `activate()`'s FIFO fill toward higher-reputation
-contributors. This matters specifically for the "what if the named
-provider just isn't there" failure mode the pool model already solves
-structurally (above) but doesn't yet solve on *quality*: FIFO picks the
-next contributor in a `TermsClass`, not the best one. A reputation score
-derived from the same onchain events already being emitted — no new trust
-assumption, no offchain oracle — is the natural Level 6-adjacent extension,
-and the honest reason it isn't built yet is that the `activate()` routing
-function would need to change from strict FIFO to a reputation-weighted
-order, which is a real state-machine change, not a frontend addition.
-Naming this now, rather than overclaiming the FIFO queue is already
-reputation-aware, is the same discipline the revenue-model section above
-applies to fees.
+A provider's track record is no longer something a judge has to take on
+faith or reconstruct from raw events by hand: both contracts now emit
+`ProviderStatsUpdated` — settled/defaulted/disputes-lost/disputes-timed-out
+counts, updated at every terminal outcome — and the Envio indexer is built
+to materialize it into a queryable `ProviderStat` row the moment a contract
+carrying that event is deployed (not yet the case for the current live
+addresses, deployed before this feature existed — see `envio/README.md`
+"What's actually verified" for that distinction stated precisely, not
+glossed over). What's *not* built yet, stated honestly: `activate()`'s FIFO
+fill still picks the
+next contributor in a `TermsClass`, not the best one — reputation is
+readable, not yet a routing input. This matters specifically for the "what
+if the named provider just isn't there" failure mode the pool model already
+solves structurally (above) but doesn't yet solve on *quality*. Routing by
+reputation needs `activate()`'s contribution walk to change from strict
+FIFO to a bucketed, reputation-weighted order — a real state-machine
+change, reviewed with the same rigor Levels 3-5 got, not a quick patch — and
+is the honest reason it isn't built yet. Naming the line between "tracked"
+and "acted on" precisely, rather than overclaiming the FIFO queue is
+already reputation-aware, is the same discipline the revenue-model section
+above applies to fees.
 
 ## What this document is not claiming
 
