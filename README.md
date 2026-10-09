@@ -1,4 +1,4 @@
-<p align="center"><a href="docs/TECHNICAL_README.md"><strong>→ Technical README</strong></a> (architecture, invariants, trust boundary, test evidence) · <a href="docs/BUSINESS_CASE.md"><strong>→ Business case</strong></a> (why this scales as a market, not just a demo)</p>
+<p align="center"><a href="https://muster-pitch.vercel.app"><strong>→ Pitch page</strong></a> (one-page summary for judges) · <a href="docs/TECHNICAL_README.md"><strong>→ Technical README</strong></a> (architecture, invariants, trust boundary, test evidence) · <a href="docs/BUSINESS_CASE.md"><strong>→ Business case</strong></a> (why this scales as a market, not just a demo)</p>
 
 # MUSTER
 

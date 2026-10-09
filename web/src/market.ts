@@ -193,14 +193,16 @@ export function mountMarket(root: HTMLElement, getWallet: () => MeraWallet | nul
     }
 
     resultHost.append(el("h3", {}, ["Arbitration panel"]));
-    const panelHost = el("div", {}, ["Loading..."]);
+    const panelHost = el("div", { class: "state-loading" }, ["Loading…"]);
     resultHost.append(panelHost);
     publicClient
       .readContract({ address: CAPACITY_MARKET_ADDRESS, abi: CapacityMarketAbi, functionName: "arbitrationPanel", args: [id] })
       .then((panelResult) => {
         const [members, threshold] = panelResult as readonly [readonly `0x${string}`[], bigint];
+        panelHost.className = "";
         panelHost.innerHTML = "";
         if (members.length === 0) {
+          panelHost.className = "state-empty";
           panelHost.append("No panel set — falls back to the timeout path only.");
         } else {
           panelHost.append(
@@ -212,6 +214,7 @@ export function mountMarket(root: HTMLElement, getWallet: () => MeraWallet | nul
         }
       })
       .catch(() => {
+        panelHost.className = "state-empty";
         panelHost.textContent = "Could not load arbitration panel.";
       });
   }
@@ -222,7 +225,8 @@ export function mountMarket(root: HTMLElement, getWallet: () => MeraWallet | nul
   });
 
   async function refreshRecent() {
-    recentList.innerHTML = "Loading...";
+    recentList.className = "state-loading";
+    recentList.textContent = "Loading…";
     try {
       const nextId = (await publicClient.readContract({
         address: CAPACITY_MARKET_ADDRESS,
@@ -230,7 +234,8 @@ export function mountMarket(root: HTMLElement, getWallet: () => MeraWallet | nul
         functionName: "nextPositionId",
       })) as bigint;
       if (nextId === 0n) {
-        recentList.innerHTML = "No positions listed yet.";
+        recentList.className = "state-empty";
+        recentList.textContent = "No positions listed yet.";
         return;
       }
       const count = 10n;
@@ -238,6 +243,7 @@ export function mountMarket(root: HTMLElement, getWallet: () => MeraWallet | nul
       const ids: bigint[] = [];
       for (let i = nextId - 1n; i >= from; i--) ids.push(i);
       const results = await Promise.allSettled(ids.map((id) => readPosition(id)));
+      recentList.className = "";
       recentList.innerHTML = "";
       ids.forEach((id, i) => {
         const r = results[i];
@@ -254,7 +260,8 @@ export function mountMarket(root: HTMLElement, getWallet: () => MeraWallet | nul
         recentList.append(item);
       });
     } catch {
-      recentList.innerHTML = "Could not load recent positions.";
+      recentList.className = "state-empty";
+      recentList.textContent = "Could not load recent positions.";
     }
   }
   refreshRecentBtn.addEventListener("click", refreshRecent);

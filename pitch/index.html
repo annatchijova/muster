@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="Muster: collateral-backed incident-response capacity, traded before you need it. Pitch page for the Onchain Finance & Trading track." />
+<title>Muster</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --ink: #1b1f1a;
+    --paper: #f3f4f0;
+    --paper-raised: #e7e9e2;
+    --rule: #cdd1c6;
+    --accent: #a8461f;
+    --accent-ink: #ffffff;
+    --verified: #2f7a63;
+    --muted: #5b6058;
+    --card: #ffffff;
+    --shadow: rgba(27, 31, 26, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #eceee6;
+      --paper: #14181a;
+      --paper-raised: #1d2220;
+      --rule: #353b35;
+      --accent: #e08a56;
+      --accent-ink: #14181a;
+      --verified: #5cbd9e;
+      --muted: #929a8d;
+      --card: #191e1b;
+      --shadow: rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #eceee6;
+    --paper: #14181a;
+    --paper-raised: #1d2220;
+    --rule: #353b35;
+    --accent: #e08a56;
+    --accent-ink: #14181a;
+    --verified: #5cbd9e;
+    --muted: #929a8d;
+    --card: #191e1b;
+    --shadow: rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Public Sans", -apple-system, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  ::selection { background: var(--accent); color: var(--accent-ink); }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 3.2rem 1.5rem 5rem; }
+
+  h1, h2, h3 { font-family: "Fraunces", Georgia, serif; text-wrap: balance; }
+
+  .eyebrow {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--verified); }
+
+  header.hero { padding-bottom: 2.2rem; border-bottom: 1px solid var(--rule); margin-bottom: 2.4rem; }
+  header.hero h1 {
+    font-size: clamp(2.2rem, 5vw, 3rem);
+    font-weight: 500;
+    font-style: italic;
+    margin: 0.6rem 0 0.9rem;
+    line-height: 1.08;
+  }
+  header.hero .dek {
+    font-size: 1.05rem;
+    max-width: 58ch;
+    color: var(--ink);
+    margin: 0 0 1.5rem;
+  }
+  header.hero .dek strong { font-weight: 600; }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+  .cta {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.78rem;
+    text-decoration: none;
+    padding: 0.55rem 0.9rem;
+    border-radius: 3px;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .cta:hover { border-color: var(--accent); }
+  .cta.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .cta.primary:hover { filter: brightness(1.05); }
+
+  /* state flow, reused motif from the product UI */
+  .flow {
+    margin-top: 1.8rem;
+    padding-top: 1.4rem;
+    border-top: 1px dashed var(--rule);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.78rem;
+  }
+  .flow .step { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .flow .arrow { color: var(--muted); }
+  .flow .tick { width: 7px; height: 7px; border-radius: 50%; }
+  .flow .branch { width: 100%; color: var(--muted); font-size: 0.74rem; margin-top: 0.2rem; }
+
+  section { margin-bottom: 3rem; }
+  section > .num {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.74rem;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+  }
+  section h2 {
+    font-size: 1.6rem;
+    font-weight: 500;
+    margin: 0.3rem 0 1rem;
+  }
+  section > p.lede { font-size: 1rem; max-width: 62ch; }
+
+  /* term-sheet rows */
+  .term-sheet { border-top: 1px solid var(--rule); margin-top: 1.2rem; }
+  .term-row {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 1.2rem;
+    padding: 0.95rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .term-row .label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 0.1rem;
+  }
+  .term-row .value { font-size: 0.95rem; }
+  .term-row .value code {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.82rem;
+    background: var(--paper-raised);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+  }
+  @media (max-width: 560px) {
+    .term-row { grid-template-columns: 1fr; gap: 0.3rem; }
+  }
+
+  /* comparison */
+  .compare { border-top: 1px solid var(--rule); margin-top: 1.2rem; }
+  .compare-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .compare-row .col { font-size: 0.92rem; }
+  .compare-row .col.typical { color: var(--muted); }
+  .compare-row .col.muster { color: var(--ink); font-weight: 500; }
+  .compare-head {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    padding-bottom: 0.6rem;
+  }
+  .compare-head .muster { color: var(--accent); }
+  @media (max-width: 560px) {
+    .compare-row, .compare-head { grid-template-columns: 1fr; gap: 0.3rem; }
+  }
+
+  /* personas */
+  .personas { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1.2rem; }
+  .persona {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 1.1rem 1.2rem;
+    box-shadow: 0 1px 3px var(--shadow);
+  }
+  .persona .side {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    margin-bottom: 0.5rem;
+  }
+  .persona h3 { font-size: 1.05rem; margin: 0 0 0.4rem; font-weight: 500; }
+  .persona p { font-size: 0.88rem; color: var(--muted); margin: 0; }
+  @media (max-width: 560px) { .personas { grid-template-columns: 1fr; } }
+
+  /* traction timeline */
+  .timeline { border-top: 1px solid var(--rule); margin-top: 1.2rem; }
+  .tl-item { display: grid; grid-template-columns: 90px 1fr; gap: 1.2rem; padding: 0.95rem 0; border-bottom: 1px solid var(--rule); }
+  .tl-item .when { font-family: "JetBrains Mono", monospace; font-size: 0.74rem; color: var(--muted); padding-top: 0.15rem; }
+  .tl-item .what { font-size: 0.92rem; }
+  .tl-item .what strong { font-weight: 600; }
+  .tl-item .verified-tag {
+    display: inline-block;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.66rem;
+    color: var(--verified);
+    border: 1px solid var(--verified);
+    border-radius: 3px;
+    padding: 0.05rem 0.35rem;
+    margin-left: 0.4rem;
+    letter-spacing: 0.02em;
+  }
+  @media (max-width: 560px) { .tl-item { grid-template-columns: 1fr; gap: 0.25rem; } }
+
+  .honesty {
+    border-left: 2px solid var(--accent);
+    padding: 0.2rem 0 0.2rem 1rem;
+    margin-top: 1.4rem;
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+  .honesty strong { color: var(--ink); }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.4rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 1rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.74rem;
+    color: var(--muted);
+  }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <p class="eyebrow"><span class="dot"></span>Live on Monad testnet · chain id 10143</p>
+    <h1>Buy incident-response capacity before the incident — not a retainer, a reservation.</h1>
+    <p class="dek">
+      <strong>Muster</strong> turns a specialist's standing commitment — "4 units of ZK-security
+      incident response, usable Oct 1–31, 30-minute acknowledgment" — into a collateral-backed,
+      transferable onchain position. A buyer reserves it; if the incident never comes, they
+      resell it before it expires instead of eating the cost. If it comes, a collateral bond is
+      what makes the SLA real instead of a promise.
+    </p>
+    <div class="cta-row">
+      <a class="cta primary" href="https://github.com/annatchijova/muster" target="_blank" rel="noreferrer">View source → GitHub</a>
+      <a class="cta" href="https://testnet.monadexplorer.com/address/0xb2bEed70CA03F9ae86276f14aAB79F6F36f681C3" target="_blank" rel="noreferrer">CapacityMarket on explorer</a>
+      <a class="cta" href="https://testnet.monadexplorer.com/address/0xA5460952b9445C2CC5daf08D4808C09f4458Aa11" target="_blank" rel="noreferrer">CapacityPool on explorer</a>
+    </div>
+
+    <div class="flow">
+      <span class="step"><span class="tick" style="background:#4a7fd1"></span>Listed</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="tick" style="background:#4a7fd1"></span>Reserved</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="tick" style="background:#c99a2e"></span>Activated</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="tick" style="background:#c99a2e"></span>Accepted</span>
+      <span class="arrow">→</span>
+      <span class="step"><span class="tick" style="background:var(--verified)"></span>Settled</span>
+      <span class="branch">missed SLA → Defaulted (collateral to buyer) · unused window → Expired (collateral to provider)</span>
+    </div>
+  </header>
+
+  <section>
+    <p class="num">01</p>
+    <h2>Why this needed a smart contract, specifically</h2>
+    <p class="lede">
+      Not because the domain is "crypto" — because three properties a retainer, a Calendly link,
+      or an NDA'd SLA document cannot give a buyer are exactly what a contract makes non-negotiable
+      between two parties who don't trust each other.
+    </p>
+    <div class="compare-head">
+      <span>Typical approach</span>
+      <span class="muster">Muster</span>
+    </div>
+    <div class="compare">
+      <div class="compare-row">
+        <div class="col typical">The same hour can informally be promised to two clients.</div>
+        <div class="col muster"><code>reserve()</code> only succeeds once per position — enforced, not policed.</div>
+      </div>
+      <div class="compare-row">
+        <div class="col typical">A missed SLA means a dispute, maybe a chargeback.</div>
+        <div class="col muster">A collateral bond pays out automatically on a missed deadline.</div>
+      </div>
+      <div class="compare-row">
+        <div class="col typical">An unused reservation is a sunk cost — a retainer bills monthly either way.</div>
+        <div class="col muster"><code>transfer()</code> moves it to another buyer before it expires. Nothing paid, nothing lost.</div>
+      </div>
+      <div class="compare-row">
+        <div class="col typical">Searching mid-incident means negotiating with whoever's free, under pressure.</div>
+        <div class="col muster">Price and provider are locked in at reservation time, before urgency gives anyone leverage.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="num">02</p>
+    <h2>Founder &amp; market readiness</h2>
+    <p class="lede">The specific first user is not "crypto traders." Two named sides, not a generic market:</p>
+    <div class="personas">
+      <div class="persona">
+        <p class="side">Supply side</p>
+        <h3>The boutique specialist</h3>
+        <p>
+          An independent ZK-security auditor, a small DFIR shop, an incident-response contractor
+          who already sells time this way informally — today either idle between engagements
+          (a sunk cost) or locked into a retainer that pays whether or not they're used.
+        </p>
+      </div>
+      <div class="persona">
+        <p class="side">Demand side</p>
+        <h3>The security/eng lead</h3>
+        <p>
+          At a mid-size Web3 protocol or DAO. Can't justify a full-time incident-response hire,
+          and today has nothing better than a "call me if something happens" arrangement — no
+          SLA, no collateral, no recourse if that person isn't free when it matters.
+        </p>
+      </div>
+    </div>
+    <p class="lede" style="margin-top:1.2rem; font-size:0.92rem; color:var(--muted)">
+      Not limited to security specialists — the same gap exists for any rare, spiky, hard-to-staff
+      specialist (an electrician, a structural engineer, a notary). A pooled market — "4 units of
+      anyone certified <code style="font-family:'JetBrains Mono',monospace">ELECTRICIAN_L2</code>," not
+      "Juan specifically" — is the same <code style="font-family:'JetBrains Mono',monospace">TermsClass</code>
+      shape already built and tested, unmodified.
+    </p>
+  </section>
+
+  <section>
+    <p class="num">03</p>
+    <h2>Traction — a real position, not a demo over static data</h2>
+    <p class="lede">
+      The "handful of test trades" bar the track rubric names, cleared with the harder path:
+      automated enforcement exercised end-to-end, confirmed by a second, independent system.
+    </p>
+    <div class="timeline">
+      <div class="tl-item">
+        <div class="when">2026-10-04</div>
+        <div class="what">
+          A real <code style="font-family:'JetBrains Mono',monospace">CapacityPosition</code> listed, reserved,
+          and activated on Monad testnet with a live <strong>45-second SLA clock</strong>.
+          <span class="verified-tag">onchain</span>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="when">same run</div>
+        <div class="what">
+          Deadline passes — <strong>Chainlink's CRE workflow</strong>, not a human, reads the chain,
+          finds the breach, submits the report. <code style="font-family:'JetBrains Mono',monospace">CapacityMarket</code>
+          emits <code style="font-family:'JetBrains Mono',monospace">Defaulted</code> with zero manual calls.
+          <span class="verified-tag">automated</span>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="when">2026-10-05</div>
+        <div class="what">
+          The <strong>Envio HyperIndex</strong> indexer, synced live and independently, reads that exact
+          position back from the chain as <code style="font-family:'JetBrains Mono',monospace">Defaulted</code>
+          into its own Postgres store — not re-asserted by the same code that produced it.
+          <span class="verified-tag">cross-checked</span>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="when">ongoing</div>
+        <div class="what">
+          118/118 Solidity tests + 5/5 CRE workflow tests passing across all five contract levels;
+          two independent adversarial security-audit rounds, findings fixed same day.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="num">04</p>
+    <h2>Path forward &amp; business model</h2>
+    <div class="term-sheet">
+      <div class="term-row">
+        <div class="label">Next step</div>
+        <div class="value">
+          Pilot with 2-3 real security boutiques/DAOs post-hackathon — real counterparties on
+          testnet first, revenue mechanism second. A named, narrow first cohort, not a generic
+          "we'll grow users" line.
+        </div>
+      </div>
+      <div class="term-row">
+        <div class="label">New verticals</div>
+        <div class="value">
+          Data, not code — a <code>TermsClass</code> (domain, window, SLA, price, arbitration panel)
+          is the only thing that defines a vertical. DFIR, pentest-on-call, legal/compliance
+          response, or a non-security trade entirely: same contract, new config row.
+        </div>
+      </div>
+      <div class="term-row">
+        <div class="label">Revenue model</div>
+        <div class="value">
+          Not built yet, stated honestly: no fee-capture exists today — every unit of value goes
+          to provider or buyer. A basis-point fee at <code>activate()</code> or <code>settle()</code>
+          was deliberately deferred as a monetization decision, not an architecture one.
+        </div>
+      </div>
+      <div class="term-row">
+        <div class="label">Reputation routing</div>
+        <div class="value">
+          Tracked today (<code>ProviderStatsUpdated</code>, indexed), not yet acted on —
+          <code>activate()</code>'s FIFO fill doesn't yet weight by reputation. Named as the honest
+          line between "tracked" and "acted on," not overclaimed.
+        </div>
+      </div>
+    </div>
+    <p class="honesty">
+      <strong>What this is not claiming:</strong> product-market fit today, paying customers, or
+      validated demand beyond this hackathon's demonstration and the pilot plan above. The claim is
+      narrower and checkable — the architecture doesn't need to be rebuilt to go from one vertical
+      on testnet to many verticals on a fee-generating mainnet, because it was built fungible and
+      multi-vertical from Level 2 onward, not as a single-provider prototype later outgrown.
+    </p>
+  </section>
+
+  <footer>
+    <span>Muster · Apache-2.0 · Onchain Finance &amp; Trading track</span>
+    <span>
+      <a href="https://github.com/annatchijova/muster" target="_blank" rel="noreferrer">GitHub</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/annatchijova/muster/blob/main/docs/TECHNICAL_README.md" target="_blank" rel="noreferrer">Technical README</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/annatchijova/muster/blob/main/docs/BUSINESS_CASE.md" target="_blank" rel="noreferrer">Full business case</a>
+    </span>
+  </footer>
+
+</div>
+</body>
+</html>

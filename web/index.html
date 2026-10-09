@@ -4,13 +4,16 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <title>MUSTER</title>
   </head>
   <body>
     <header class="topbar">
       <div class="topbar-left">
-        <h1>MUSTER<span class="badge">Monad testnet</span></h1>
-        <p class="tagline">Capacity positions, live against chain id 10143.</p>
+        <h1><span class="wordmark">MUSTER</span><span class="badge"><span class="live-dot"></span>Monad testnet</span></h1>
+        <p class="tagline">Collateral-backed incident-response capacity, traded before you need it.</p>
       </div>
       <div class="topbar-right">
         <button id="theme-toggle" class="icon-btn" title="Toggle theme" type="button">&#9789;</button>
@@ -19,6 +22,30 @@
         <button id="wallet-register" class="secondary" type="button">Register new passkey</button>
       </div>
     </header>
+
+    <section class="hero">
+      <p class="hero-line">
+        Reserve a specialist's time ahead of the incident — collateral makes the SLA real,
+        and an unused reservation transfers to someone who needs it instead of expiring as a sunk cost.
+      </p>
+      <ol class="flow">
+        <li class="flow-step"><span class="flow-dot blue"></span>Listed</li>
+        <li class="flow-arrow">&#8594;</li>
+        <li class="flow-step"><span class="flow-dot blue"></span>Reserved</li>
+        <li class="flow-arrow">&#8594;</li>
+        <li class="flow-step"><span class="flow-dot yellow"></span>Activated</li>
+        <li class="flow-arrow">&#8594;</li>
+        <li class="flow-step"><span class="flow-dot yellow"></span>Accepted</li>
+        <li class="flow-arrow">&#8594;</li>
+        <li class="flow-step"><span class="flow-dot green"></span>Settled</li>
+      </ol>
+      <ol class="flow flow-branch">
+        <li class="flow-step muted">missed SLA &#8594;</li>
+        <li class="flow-step"><span class="flow-dot red"></span>Defaulted</li>
+        <li class="flow-step muted">· unused window &#8594;</li>
+        <li class="flow-step"><span class="flow-dot muted-dot"></span>Expired</li>
+      </ol>
+    </section>
 
     <nav class="tabs">
       <button class="tab-btn active" data-tab="market" type="button">Market (L1)</button>
@@ -31,6 +58,12 @@
       <section id="tab-pool" class="tab-panel"></section>
       <section id="tab-reputation" class="tab-panel"></section>
     </main>
+
+    <footer class="site-footer">
+      <span>MUSTER · Apache-2.0</span>
+      <a href="https://github.com/annatchijova/muster" target="_blank" rel="noreferrer">GitHub</a>
+      <a href="https://testnet.monadexplorer.com" target="_blank" rel="noreferrer">Monad explorer</a>
+    </footer>
 
     <div id="toast-root" class="toast-root" role="status" aria-live="polite"></div>
 
