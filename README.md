@@ -152,13 +152,16 @@ hidden).
 
 **Envio indexer**: [`envio/`](envio/) indexes both contracts' full
 lifecycle plus provider reputation into a queryable GraphQL API — the only
-way to browse available capacity today besides raw `cast call`. Synced live
-against Monad testnet and confirmed against Postgres directly: both real
-`Listed`→`Defaulted` positions from the CRE exercise above came back
-correctly. `ProviderStat` currently reads empty against the live
-contracts — not a bug, the deployed bytecode predates the
-`ProviderStatsUpdated` event added in a later commit; see
-[`envio/README.md`](envio/README.md) for the full, honest trace.
+way to browse available capacity today besides raw `cast call`. Re-pointed
+2026-10-05 at the current (`providerStats`-carrying) pair below, and
+exercised directly against *that same current pair* on 2026-10-09: a real
+position (`#0`) was listed (`0x100eb38c…54690`), reserved, and activated
+with a 45-second SLA, then found and defaulted by the identical CRE
+workflow described above (report tx `0xf6dc7a5c…00303`) — `Defaulted`
+confirmed onchain, and `providerStats(provider).defaultedCount` reads `1`
+directly against `CapacityMarket`, no indexer needed to see it. See
+[`envio/README.md`](envio/README.md) for Envio's own sync against this
+same position.
 
 - Foundry project, Solidity contracts (`src/CapacityMarket.sol`,
   `src/CapacityPool.sol`, `src/CREDeadlineReceiver.sol`), plus the
@@ -203,20 +206,17 @@ F4 gas-stipend fix (`docs/SECURITY_AUDIT_ROUND2_2026-10-05.md`):
 described below ran against the *previous* pair, before this redeploy —
 see that pair's row in the history table for the preserved record of it.
 
-**Known gap from this redeploy, not yet closed:** `envio/config.yaml`
-still indexes the previous (now-historical) `CapacityMarket`/
-`CapacityPool` pair — the Envio indexer was built and live-exercised
-against that pair (see `envio/README.md`) and has not been re-pointed at
-the pair above. Re-pointing means new `start block`s for the new
-addresses and a fresh local sync, not just an address swap — left for a
-deliberate follow-up rather than done reflexively here.
+**Gap from this redeploy, closed 2026-10-05:** `envio/config.yaml` was
+re-pointed at the pair above (new, binary-searched `start_block`s, not a
+bare address swap — see `envio/README.md`) and confirmed synced; see the
+Envio indexer note above for the live exercise run directly against it.
 
 **Earlier deploys, kept live and verified as this project's audit trail —
 do not send value to any of them:**
 
 | Contract | Address | Why it's stale |
 |---|---|---|
-| `CapacityMarket` | `0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364` | Level 5, pre-`providerStats` — exercised live end-to-end including the CRE-automated default path (a position listed/reserved/activated with a 45-second SLA, then automatically defaulted once it lapsed — `Defaulted` event, status confirmed onchain). Also what `envio/`'s live indexer sync above still points at. |
+| `CapacityMarket` | `0x6fDA6975D7d585a772Dc763Ab44Bc206c94a0364` | Level 5, pre-`providerStats` — exercised live end-to-end including the CRE-automated default path (a position listed/reserved/activated with a 45-second SLA, then automatically defaulted once it lapsed — `Defaulted` event, status confirmed onchain). The current pair above has since been exercised the identical way (see "Envio indexer" note above) — this one is kept only as the first such record. |
 | `CapacityPool` | `0x44f305fbCF56acECe8f79Cd9773351E68634B0D5` | Same, Level 5 pre-`providerStats`. |
 | `CapacityMarket` | `0x1224950b84a86f57cB4AE838D372879960862896` | Level 4 (single `arbitrator` field, not the panel) — not exercised live. |
 | `CapacityPool` | `0x29Bf88bDA7c6040713346916DBb2BbeBa3B61271` | Same, Level 4. |

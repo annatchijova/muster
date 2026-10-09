@@ -87,6 +87,24 @@ activity). `ProviderStat` is no longer structurally blocked the way it was
 against the previous deployment — it will populate the first time anyone
 settles, defaults, or loses/times-out a dispute against the new contracts.
 
+**2026-10-09, that first real activity against the current deployment:**
+`web/`/`docs/TECHNICAL_README.md`'s "Sponsor integration — Chainlink CRE"
+exercise was repeated directly against the pair above (not left resting on
+the historical pair's record) — a position listed, reserved, activated
+with a 45-second SLA, then defaulted by the real CRE workflow
+(`cre workflow simulate deadline-keeper --target staging-settings
+--broadcast`). Re-ran `npm run dev` (resumed from the existing checkpoint,
+not a reset) against `config.yaml` unchanged from the 2026-10-05 re-point;
+synced to within 6 blocks of chain head. Confirmed via direct Postgres
+query (same method as 2026-10-04, since local Hasura again collided with
+an unrelated service on port 8080 — see note above): `Position` row
+`10143-0` reads `status: Defaulted`, `provider`/`buyer` both the funded
+demo account; `ProviderStat` row
+`10143-CapacityMarket-0x...a51787` reads `defaultedCount: 1` — the first
+non-zero `ProviderStat` row this indexer has ever produced, confirming
+both the event and the reputation-tracking path end to end against
+contracts nobody had exercised before today.
+
 ## Deployment addresses indexed
 
 | Contract | Address | Deploy block (binary-searched via `cast code`) |

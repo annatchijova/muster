@@ -368,26 +368,43 @@
       <div class="tl-item">
         <div class="when">2026-10-04</div>
         <div class="what">
-          A real <code style="font-family:'JetBrains Mono',monospace">CapacityPosition</code> listed, reserved,
-          and activated on Monad testnet with a live <strong>45-second SLA clock</strong>.
+          First live exercise: a real <code style="font-family:'JetBrains Mono',monospace">CapacityPosition</code>
+          listed, reserved, and activated with a <strong>45-second SLA clock</strong>; <strong>Chainlink's CRE
+          workflow</strong>, not a human, found the lapsed deadline and submitted the report —
+          <code style="font-family:'JetBrains Mono',monospace">Defaulted</code> with zero manual calls.
           <span class="verified-tag">onchain</span>
-        </div>
-      </div>
-      <div class="tl-item">
-        <div class="when">same run</div>
-        <div class="what">
-          Deadline passes — <strong>Chainlink's CRE workflow</strong>, not a human, reads the chain,
-          finds the breach, submits the report. <code style="font-family:'JetBrains Mono',monospace">CapacityMarket</code>
-          emits <code style="font-family:'JetBrains Mono',monospace">Defaulted</code> with zero manual calls.
-          <span class="verified-tag">automated</span>
         </div>
       </div>
       <div class="tl-item">
         <div class="when">2026-10-05</div>
         <div class="what">
-          The <strong>Envio HyperIndex</strong> indexer, synced live and independently, reads that exact
-          position back from the chain as <code style="font-family:'JetBrains Mono',monospace">Defaulted</code>
-          into its own Postgres store — not re-asserted by the same code that produced it.
+          Contracts redeployed to add <code style="font-family:'JetBrains Mono',monospace">providerStats</code>
+          (the pair now linked above) — which reset live-exercised history to zero on the new addresses.
+          Envio re-pointed at them the same day.
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="when">2026-10-09</div>
+        <div class="what">
+          Repeated end-to-end on <strong>the current pair, not just the old one</strong>: position
+          <code style="font-family:'JetBrains Mono',monospace">#0</code> listed
+          (<code style="font-family:'JetBrains Mono',monospace">0x100eb38c…54690</code>), reserved,
+          activated, then defaulted by the same CRE workflow (report
+          <code style="font-family:'JetBrains Mono',monospace">0xf6dc7a5c…00303</code>).
+          <code style="font-family:'JetBrains Mono',monospace">providerStats(provider).defaultedCount</code>
+          now reads <strong>1</strong> directly against the contracts every link on this page points at.
+          <span class="verified-tag">onchain</span>
+        </div>
+      </div>
+      <div class="tl-item">
+        <div class="when">same day</div>
+        <div class="what">
+          The <strong>Envio HyperIndex</strong> indexer, synced independently against the same current
+          pair, reads position <code style="font-family:'JetBrains Mono',monospace">10143-0</code> back as
+          <code style="font-family:'JetBrains Mono',monospace">Defaulted</code> and produces its first-ever
+          non-zero <code style="font-family:'JetBrains Mono',monospace">ProviderStat</code> row
+          (<code style="font-family:'JetBrains Mono',monospace">defaultedCount: 1</code>) — confirmed by a
+          second system, not re-asserted by the code that produced the event.
           <span class="verified-tag">cross-checked</span>
         </div>
       </div>

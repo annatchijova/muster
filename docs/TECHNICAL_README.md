@@ -36,18 +36,23 @@ which is current. Current: `CapacityMarket` at
 `0xA5460952b9445C2CC5daf08D4808C09f4458Aa11` — redeployed 2026-10-05 to add
 `providerStats` (the prior pair's bytecode predated that function; its
 selector reverted, confirmed via a raw `eth_call` before redeploying).
-`providerStats` is now confirmed callable on this pair, but it has not yet
-had its own live lifecycle exercise — that record belongs to the
-*previous* Level 5 pair (same ABI otherwise): a real position was listed,
-reserved, and activated with a short SLA, then automatically defaulted by
-the CRE workflow once the deadline passed, confirmed by the `Defaulted`
-event and the position's onchain status. The pair before that (Level 4,
-single `arbitrator` field) was never exercised live; the pair before that
-(pre-Level-4, patched) was exercised end-to-end with real MON by hand;
-everything before that is the still-vulnerable pre-audit deploy.
-`envio/`'s live-synced indexer still points at the previous (pre-redeploy)
-pair, not the current one — see `README.md`'s "Live on Monad testnet" for
-that gap. Not independently audited beyond this project's own two
+`providerStats` is now confirmed callable on this pair, and as of
+2026-10-09 it has its own live lifecycle exercise too: position `#0` was
+listed, reserved, and activated with a 45-second SLA, then automatically
+defaulted by the CRE workflow once the deadline passed (report tx
+`0xf6dc7a5c…00303`), confirmed by the `Defaulted` event, the position's
+onchain status, and `providerStats(provider).defaultedCount` reading `1`
+directly against this pair — not only against the *previous* Level 5 pair
+(same ABI otherwise), which carries the first such record: a real position
+was listed, reserved, and activated with a short SLA, then automatically
+defaulted by the CRE workflow once the deadline passed, confirmed by the
+`Defaulted` event and the position's onchain status. The pair before that
+(Level 4, single `arbitrator` field) was never exercised live; the pair
+before that (pre-Level-4, patched) was exercised end-to-end with real MON
+by hand; everything before that is the still-vulnerable pre-audit deploy.
+`envio/`'s live-synced indexer was re-pointed at the current pair on
+2026-10-05 — see `README.md`'s "Live on Monad testnet" and `envio/README.md`
+for the sync confirmation. Not independently audited beyond this project's own two
 red-team passes (`docs/SECURITY_AUDIT_2026-10-01.md`,
 `docs/SECURITY_AUDIT_ROUND2_2026-10-05.md`). Not deployed to mainnet.
 
@@ -710,6 +715,18 @@ real one). Re-ran the identical scenario against it: the Mock Forwarder's
 `Defaulted(1)`, and the position's onchain status read back as
 `Defaulted` — the full pipeline, cron trigger through onchain state
 change, proven on a real chain.
+
+**Repeated against the current (`providerStats`-carrying) pair, 2026-10-09,
+not just the pair above:** the pair was redeployed 2026-10-05 to add
+`providerStats`, which reset the chain of live-exercised history to zero
+on the new addresses — so the identical scenario was re-run against them
+directly rather than left resting on the superseded pair's record. Same
+result: `cre workflow simulate deadline-keeper --target staging-settings
+--broadcast --trigger-index 0` found the lapsed 45-second SLA on position
+`#0`, submitted report tx `0xf6dc7a5c…00303`, `CapacityMarket` emitted
+`Defaulted(0)`, and `providerStats(provider)` now reads
+`defaultedCount: 1` directly against the contracts every link in this repo
+currently points at.
 
 **What this does not yet prove:** a report delivered by the real DON
 through the real production Forwarder, since that requires Deploy Access
