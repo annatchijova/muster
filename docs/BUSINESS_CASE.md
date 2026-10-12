@@ -19,9 +19,19 @@ argument for *why it scales* in support — not as a separate pitch. See
 [`README.md`](../README.md) for what the product is and
 [`TECHNICAL_README.md`](TECHNICAL_README.md) for how it's built.
 
-## Founder & Market Readiness: who, specifically, and why doesn't this exist
+## Founder & Market Readiness: the market for future availability
 
-**The specific first user is not "crypto traders."** Two named sides:
+MUSTER's business thesis is that **a professional's future availability can
+be sold as a bounded, transferable commitment**. Today, a buyer often pays
+for standing capacity through payroll or a retainer, or waits until an
+urgent incident to find someone available and negotiate under pressure.
+Both options have a cost: money tied up in capacity that may sit unused,
+or time and bargaining power lost when the need is already urgent. MUSTER
+tests whether specifying that capacity in advance — for example, a set
+number of response hours within a time window and an acknowledgement SLA —
+can make it easier to buy, pool, and transfer.
+
+The specific first users are two sides, not generic "crypto traders":
 
 - **Supply side**: independent and boutique security specialists who
   already sell their time this way informally — a freelance ZK-security
@@ -34,35 +44,37 @@ argument for *why it scales* in support — not as a separate pitch. See
   something happens" arrangement with no SLA, no collateral, and no
   recourse if the person is unavailable when it matters.
 
-**Why this market doesn't already exist**: the thing a retainer cannot do
-is make the commitment *tradeable*. A security lead who reserves capacity
-and never needs it has paid for nothing transferable — the slot cannot be
-resold, and the provider has no collateral obligation that makes the SLA
-real instead of a verbal promise. Building this off-chain means someone
-has to be the trusted intermediary holding both the provider's
-reputation and the buyer's money — which is exactly the retainer-broker
-model that already exists and that this market is deliberately not
-rebuilding. Making the commitment itself an asset (collateral-backed,
-transferable, SLA-enforced without a human referee) is the part that
-genuinely needed a smart contract, not just a database with better UX.
+**The market gap MUSTER is testing:** existing tools can hire specialists,
+broker engagements, or arrange retainers. We are not claiming that no
+comparable service exists. The narrower thesis is that these arrangements
+do not necessarily combine, in one instrument, a defined block of future
+capacity, pooled supply from multiple providers, a transferable buyer
+reservation, provider collateral, and automatic handling of an SLA
+deadline. That combination could let a buyer secure readiness before an
+incident, then pass the unused reservation to another buyer if priorities
+change. In the current prototype, `transfer()` and
+`transferReservation()` change who holds the reservation; they do not
+execute or price a resale. Whether counterparties will arrange and pay for
+those transfers — and whether enough buyers and providers will participate
+to create liquidity — is an open market question for the pilot, not a
+result already demonstrated.
 
-**Not limited to security specialists — the mentor framing (2026-10-04) that
-sharpened this**: the same gap exists for any specialist whose demand is
-rare, spiky, and hard to staff for — an electrician, a structural engineer,
-a notary, a forensic auditor. Today a buyer either names one specific
-provider (who may simply not be available the one time they're needed) or
-pays a standing retainer for idle capacity. A pooled market — "4 units of
-anyone certified `ELECTRICIAN_L2`," not "Juan specifically" — is exactly
-`CapacityPool`'s `TermsClass` shape (see "New verticals are data, not
-code" below): the single-named-provider failure mode this framing worries
-about is a Level 1 (`CapacityMarket`) limitation that Level 2 already
-solves, not a gap that needs new engineering. The "reserve now, transfer
-if the incident never happens, don't pay a recurring fee for nothing"
-mechanic the framing asks for is also already built: `reserve()` +
-`transfer()` + `expireReservation()`/`withdrawContribution()` are exactly
-that path, demonstrated live on testnet (see below) for the
-security-response vertical and identical, unmodified, for an electrician
-one.
+The contract makes the reservation and its deadline enforceable between
+parties without an operator having to adjudicate every missed
+acknowledgement. It does not determine service quality or prove that a
+provider was available. Its business value depends on an offchain market
+forming around the standardized commitment.
+
+**The same hypothesis applies beyond security.** Accounting, forensic
+accounting, construction trades such as electricians and bricklayers,
+structural inspection, and other specialist services can have irregular
+demand, costly idle availability, and urgent response needs. A buyer could
+specify a credential or skill class and reserve units from a pool rather
+than depend on one named provider. `CapacityPool` supports exact-match
+terms classes and multi-provider assignment; the current live demonstration
+is security response, not evidence that these other verticals already have
+buyers or supply. They are candidates for validation after the first
+security pilot.
 
 ## Traction & Path Forward
 
@@ -121,15 +133,39 @@ naming a provider, and `activate()` routes FIFO across however many
 providers are needed to fill the reservation. Depth of supply is what a
 marketplace sells as much as the underlying good.
 
-### Enforcement is the part that doesn't scale in the competing approach — and here it does
+### A pilot must test provider incentives and transfer demand
 
-A retainer, an NDA'd SLA document, a Calendly-based booking system all
-depend on *someone* noticing a missed deadline and calling the right
-person — an ops cost that grows with every concurrent position. The CRE
-workflow makes that a fixed cron job regardless of whether there are ten
-open positions or ten thousand: the specific, checkable mechanism behind
-"this scales operationally," not a general claim about blockchains being
-efficient.
+The two contracts make different choices when a reservation expires unused.
+In `CapacityMarket`, if a buyer reserved a named provider's position, that
+provider receives the price and gets collateral back. In `CapacityPool`,
+the buyer gets the reservation price back, the quantity returns to the pool,
+and providers can reclaim collateral for unassigned capacity after the
+window closes. No provider receives a reservation premium in that pool
+expiry path; a provider receives the price when an assignment settles.
+That choice follows the fact that no particular provider was assigned
+before activation, but it raises a market question: will providers commit
+capacity to a pool on those terms?
+
+The pilot should ask 2-3 providers directly whether that payout model is
+acceptable, what minimum commitment or cancellation terms they need, and
+whether they would list capacity that might be reserved and later released
+without a fee. It should also test whether buyers would pay to take over an
+unused reservation. The prototype supports transfer of the reservation;
+the parties must arrange any transfer payment themselves. These interviews
+and trades can show whether the proposed instrument is attractive enough to
+support supply and secondary demand.
+
+### Automated deadline handling reduces manual monitoring; its compute cost scales with volume
+
+An offchain retainer or SLA typically leaves someone responsible for
+noticing a missed deadline and escalating it. MUSTER's CRE workflow runs
+on a scheduled cadence and can submit due actions automatically, reducing
+that manual monitoring work. Its per-run workload is not constant: the
+current implementation reads every listed position and every pool
+assignment, so RPC reads and processing grow with the number of records;
+the report and transaction work also grow with the number of due actions.
+At larger volumes it will need measured limits and likely pagination or
+batching. No scale benchmark has established its operating cost yet.
 
 ### Where the revenue model goes (not yet built, stated honestly)
 
@@ -142,7 +178,7 @@ at settlement points that already exist without touching the state
 machine. Naming this honestly, rather than inventing a number, is itself
 part of answering Founder & Market Readiness credibly.
 
-### Where provider reputation goes (tracked today, not yet routed on)
+### Provider reputation is tracked onchain and indexed; routing does not use it yet
 
 A provider's track record is no longer something a judge has to take on
 faith or reconstruct from raw events by hand: both contracts now emit
@@ -150,21 +186,23 @@ faith or reconstruct from raw events by hand: both contracts now emit
 counts, updated at every terminal outcome — and the Envio indexer
 materializes it into a queryable `ProviderStat` row the moment a contract
 carrying that event is deployed. The currently deployed contracts do carry
-it (redeployed 2026-10-05 specifically to add it, after the previous pair
-was found to predate it entirely — see `README.md`'s "Live on Monad
-testnet"); `ProviderStat` reads 0 rows right now only because that
-deployment is genuinely brand new, with no settlements/defaults/disputes
-against it yet, not because of any structural gap — see `envio/README.md`
-"What's actually verified" for that distinction stated precisely, not
-glossed over. What's *not* built yet, stated honestly: `activate()`'s FIFO
+it (redeployed 2026-10-05 specifically to add it; see `README.md`'s "Live
+on Monad testnet"). On 2026-10-09, the current deployment recorded the
+CRE-triggered default of position `#0`; the direct contract read returned
+`defaultedCount == 1`, and Envio indexed a corresponding `ProviderStat`
+row with `defaultedCount: 1` (`envio/README.md`, "What's actually
+verified"). This is one recorded default, not a meaningful performance
+history or proof of reputation-based selection. What's *not* built yet:
+`activate()`'s FIFO
 fill still picks the
 next contributor in a `TermsClass`, not the best one — reputation is
 readable, not yet a routing input. This matters specifically for the "what
-if the named provider just isn't there" failure mode the pool model already
-solves structurally (above) but doesn't yet solve on *quality*. Routing by
-reputation needs `activate()`'s contribution walk to change from strict
-FIFO to a bucketed, reputation-weighted order — a real state-machine
-change, reviewed with the same rigor Levels 3-5 got, not a quick patch — and
+if enough qualified providers are not available" failure mode the pool
+model addresses structurally (above) but does not solve on *quality*.
+Routing by reputation needs `activate()`'s contribution walk to change
+from strict FIFO to a bucketed, reputation-weighted order — a real
+state-machine change, reviewed with the same rigor Levels 3-5 got, not a
+quick patch — and
 is the honest reason it isn't built yet. Naming the line between "tracked"
 and "acted on" precisely, rather than overclaiming the FIFO queue is
 already reputation-aware, is the same discipline the revenue-model section
