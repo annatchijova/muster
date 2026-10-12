@@ -95,39 +95,30 @@ order, with its terms unchanged.*
 ### State machine
 
 ```
-LISTED
-  │  reserve()
-  ▼
-RESERVED ──transfer()──▶ RESERVED (new buyer, same terms)
-  │  │
-  │  └─ expire() [window closed, never activated] ──▶ EXPIRED
-  │                                              (collateral [+ price] → provider)
-  │  activate()
-  ▼
-ACTIVATED
-  │  │
-  │  ├─ acceptActivation() [within SLA] ──▶ ACCEPTED
-  │  │                                          │  claimDelivery(evidenceHash)
-  │  │                                          ▼
-  │  │                                    DELIVERY CLAIMED
-  │  │                                          │     │
-  │  │                                 settle() │     │ dispute(reasonHash)
-  │  │                     [buyer approves,     │     │ [within disputeWindow]
-  │  │                      any time]           ▼     ▼
-  │  │                                      SETTLED  DISPUTED
-  │  │                                      (price +    │  resolveDisputeByTimeout()
-  │  │                                     collateral    │  [after a second disputeWindow]
-  │  │                                     → provider)   ▼
-  │  │                                              REFUNDED
-  │  │                               finalizeDelivery()  (price + collateral → buyer)
-  │  │                          [anyone, after disputeDeadline,
-  │  │                           if buyer never settled/disputed]
-  │  │                                          │
-  │  │                                          ▼
-  │  │                                      SETTLED
-  │  │
-  │  └─ claimDefault() [SLA missed] ──▶ DEFAULTED
-  │                                       (price + collateral → buyer)
+LISTED ── reserve() ──▶ RESERVED ── transfer() ──▶ RESERVED (new buyer)
+  │                         │
+  │                         ├─ expire() [window closed] ──▶ EXPIRED
+  │                         │   (collateral + price → provider)
+  │                         └─ activate() ──▶ ACTIVATED
+  │                                              │
+  │                                              ├─ acceptActivation() [within SLA]
+  │                                              │       └─▶ ACCEPTED
+  │                                              │              └─ claimDelivery(evidenceHash)
+  │                                              │                    └─▶ DELIVERY CLAIMED
+  │                                              │                         ├─ settle() [buyer, any time]
+  │                                              │                         │    └─▶ SETTLED (price + collateral → provider)
+  │                                              │                         ├─ dispute(reasonHash) [within disputeWindow]
+  │                                              │                         │    └─▶ DISPUTED
+  │                                              │                         │         ├─ voteDispute() [panel threshold reached]
+  │                                              │                         │         │    └─▶ SETTLED or REFUNDED (per verdict)
+  │                                              │                         │         └─ resolveDisputeByTimeout()
+  │                                              │                         │              [after another disputeWindow]
+  │                                              │                         │                └─▶ REFUNDED (price + collateral → buyer)
+  │                                              │                         └─ finalizeDelivery() [anyone, after disputeDeadline]
+  │                                              │                              └─▶ SETTLED (price + collateral → provider)
+  │                                              └─ claimDefault() [SLA missed]
+  │                                                     └─▶ DEFAULTED (price + collateral → buyer)
+  └─ expire() [window closed, never reserved] ──▶ EXPIRED (collateral → provider)
 ```
 
 `expire()` also accepts a position still in `Listed` (never reserved) once
@@ -357,10 +348,12 @@ struct TermsClass {
 
 `classId = keccak256(abi.encode(terms))`. Two contributions are fungible
 with each other if and only if they hash to the same `classId` — i.e. they
-agree on domain, window, SLA, and price down to the wei. This is a
+agree on domain, validity window, activation SLA, dispute window, arbitration
+panel and threshold, price per unit, and collateral per unit. This is a
 deliberately strict notion of fungibility for Level 2: no partial-match
 routing (e.g. "close enough" windows), no price discovery. Loosening that
-is a plausible Level 3+ direction, not something this level approximates.
+is a possible future extension; the current implementation does not
+approximate partial matching or price discovery.
 
 ### State machine
 
@@ -558,7 +551,7 @@ destination, not patches on a throwaway prototype:
   throughout both contracts.
 - **Strict terms-matching fungibility.** L2 only pools contributions whose
   terms hash identically. No partial/fuzzy matching, no price discovery
-  between classes. A plausible Level 3+ direction, not attempted here.
+  between classes. This remains a possible future extension.
 - **Contribution-fragmentation gas griefing in `activate()`.** Anyone can
   contribute many small-quantity entries to a class, lengthening the FIFO
   walk a future `activate()` call must perform. The correctness argument
@@ -771,9 +764,6 @@ current size.
 
 ## License
 
-Not yet decided for this repository — the hackathon's exact licensing
-requirement has not been confirmed. Source files currently carry
-`SPDX-License-Identifier: UNLICENSED` (no rights granted) as a deliberate
-placeholder, not a final choice. Default plan, absent an explicit
-requirement: Apache-2.0, matching the rest of this author's open-source
-portfolio.
+This repository is licensed under the [Apache License 2.0](../LICENSE).
+The Solidity contracts identify this license with
+`SPDX-License-Identifier: Apache-2.0`.
