@@ -2,40 +2,50 @@
 
 # MUSTER
 
-A security incident doesn't wait for you to find a specialist. These
-incidents happen often enough that no company can just hope one never comes
-— but rare enough that almost nobody can justify a full-time hire, or a
-retainer that bills every month whether or not the specialist is ever used.
-And when the incident actually happens, you're searching the worst possible
-market as a buyer: whoever's free knows you're under pressure and prices
-accordingly, assuming anyone's free at all.
+The problem is **money, availability, and urgency**. Keeping forensic
+specialists on staff means paying salaries even when no case needs them. A
+monthly retainer also charges for standing availability, whether it gets
+used or not. But when an incident does happen, there may be nobody free —
+and finding someone while a case is unfolding means searching and
+negotiating under pressure.
 
-**MUSTER lets you buy that capacity before you need it — and it isn't a
-subscription.** You reserve a specific, collateral-backed slot ahead of
-time. If the incident never comes, you transfer the reservation to someone
-who does need it before it expires; you're not stuck paying month after
-month for a specialist sitting idle, the way a retainer makes you.
+**MUSTER is designed as a shared market for reserving professional capacity
+in advance.** A buyer reserves a defined block for a future window, with an
+agreed price and response SLA backed by collateral. In the pooled market,
+that block can be filled across providers who committed to the same terms.
+The first use case is forensic incident response; the same market structure
+could serve accountants, bricklayers, or other professionals whose work is
+needed unpredictably.
+
+If the buyer no longer needs the reservation, they can transfer the right to
+use it to another buyer before it expires. This gives the buyer a way to pass
+on the reservation before it lapses; if nobody transfers or activates it in
+time, the contract's expiry rules apply. In the current contracts, transfer
+changes who can activate the reservation; MUSTER does not process a resale
+payment or automatically refund the original buyer. The parties arrange any
+compensation between themselves.
 
 ## What this is
 
-A provider commits ahead of time: *"4 units of ZK-security incident response,
-usable between Oct 1–31, I'll acknowledge activation within 30 minutes."*
-That commitment becomes a `CapacityPosition` — an onchain asset with an
-owner, a time window, a service-level deadline, and a collateral bond behind
-it.
+A forensic provider might commit: *"I reserve four hours for incident
+response between Oct 1–31 and will acknowledge an activation within 30
+minutes."* The first two contracts represent commitments as capacity units
+with a window, price, response SLA, and collateral; they do not measure
+offchain work hours or certify professional credentials. That commitment
+becomes a `CapacityPosition` — an onchain asset with an owner, a time window,
+a service-level deadline, and a collateral bond behind it.
 
-A buyer reserves it. If the incident never comes, they can transfer it to
-someone who needs it, before it expires. If the incident comes, they
-activate it — the position becomes a live claim with a ticking SLA clock,
-and the provider's collateral is what makes the deadline mean something
-instead of just being a promise.
+A buyer reserves it before an incident. If the incident happens during the
+window, they activate the position and the provider's response SLA starts.
+The collateral backs the provider's commitment to that deadline; it does not
+prove that offchain work was performed or met a quality bar.
 
 ```
-TODAY                                      IF THE INCIDENT HAPPENS
- │                                                   │
- ├─ reserve 4 u. ZK response ─────────────────────── ┤── activate() → provider has 30 min
- │                                                   │
- └─ it doesn't ── transfer() to another company ─────┘   to accept, or loses the collateral
+BEFORE A CASE            IF THE CASE OPENS          IF IT DOESN'T
+reserve a block  ───────▶ activate; response SLA
+                         starts for the provider
+                       └──────────────────────────▶ transfer the right
+                                                    before expiry
 ```
 
 ## Why a blockchain, specifically
@@ -46,11 +56,11 @@ non-negotiable between two parties who don't trust each other:
 
 | Typical approach (a retainer, a Calendly link, an NDA'd SLA doc) | MUSTER |
 |---|---|
-| The same hour can informally be promised to two clients | `reserve()` only succeeds once per position — enforced, not policed |
-| A missed SLA means a dispute, maybe a chargeback | A collateral bond pays out automatically on a missed deadline |
-| An unused reservation is a sunk cost — a retainer bills monthly either way | An unused position transfers to another buyer before it expires; nothing was paid for and lost |
-| Searching mid-incident means negotiating with whoever's free, under pressure, at whatever rate they name | Price and provider are locked in at reservation time, before urgency gives anyone leverage |
-| "Trust me, I was available" | What happened — reserved, transferred, activated, accepted, settled, defaulted — is a public, ordered, tamper-evident record |
+| Salaries or monthly retainers pay for capacity even when it sits idle | Reserve a defined block for a specific future window instead of keeping a full-time specialist on standby |
+| During an incident, search for whoever is free and negotiate under pressure | Reserve the provider, price, and response SLA in advance |
+| An unused reservation expires with no way to pass it on | Transfer the right to activate it to another buyer before expiry; any resale payment is arranged between buyers |
+| A single provider may not be available when needed | `CapacityPool` can route a reservation across providers who committed to the same terms |
+| "Trust me, I was available" | The chain records when capacity was reserved, transferred, activated, accepted, and settled or defaulted |
 
 ## How it behaves
 

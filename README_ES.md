@@ -2,38 +2,33 @@
 
 # MUSTER
 
-Conseguir ayuda especializada durante un incidente de seguridad puede ser difícil justo cuando más se necesita. Contratar a alguien a tiempo completo o pagar un abono mensual resulta costoso si la capacidad queda sin usar; buscar ayuda cuando el incidente ya empezó deja al comprador negociando bajo presión.
+El problema es **la plata, la disponibilidad y la urgencia**. Tener peritos forenses en relación de dependencia implica pagar salarios aunque no haya un caso que requiera su trabajo. Un abono mensual también cuesta aunque esa disponibilidad quede ociosa. Pero cuando sí ocurre un incidente, quizá no haya nadie disponible; encontrar a alguien mientras el caso avanza obliga a buscar y negociar bajo presión.
 
-**MUSTER permite reservar esa capacidad por adelantado, sin convertirla en una suscripción.** El proveedor compromete disponibilidad y deja una garantía como colateral. El comprador puede transferir la reserva si ya no la necesita o activarla cuando surge el incidente.
+**MUSTER propone un mercado compartido para reservar capacidad profesional por adelantado.** El comprador reserva un bloque definido para una ventana futura, con precio y SLA de respuesta respaldado por colateral. En el pool, ese bloque puede cubrirse con aportes de distintos proveedores que aceptaron las mismas condiciones. El primer caso de uso es la respuesta forense a incidentes; la misma estructura podría servir para contadores, albañiles u otros profesionales cuyo trabajo se necesita de manera imprevisible.
 
-## Probalo
-
-- **Aplicación web:** [muster-dapp.vercel.app](https://muster-dapp.vercel.app)
-- **Presentación:** [muster-pitch.vercel.app](https://muster-pitch.vercel.app)
-- **Red:** Monad testnet (chain ID 10143)
-- **Código fuente:** [GitHub](https://github.com/annatchijova/muster)
-
-La aplicación permite consultar los contratos sin conectar una wallet. Para enviar transacciones, registrá una passkey desde un navegador compatible; Mera deriva una cuenta para firmar. La cuenta necesita MON de testnet, disponible en el [faucet de Monad](https://faucet.monad.xyz).
-
-La posición #0 es un ejemplo público: se listó, reservó y activó con un SLA de 45 segundos; Chainlink CRE detectó el vencimiento y ejecutó el default. [Ver en el explorer la transacción del reporte CRE](https://testnet.monadexplorer.com/tx/0xf6dc7a5cd0527b52007ac9907070edd00f9f75287f4fdf245ede2a0361300303). La posición quedó en estado Defaulted y el contador de defaults del proveedor puede consultarse en el contrato.
+Si el comprador finalmente no necesita la reserva, puede transferir a otro comprador el derecho a usarla antes de que venza. Así tiene la opción de pasarla antes de que caduque; si nadie la transfiere o activa a tiempo, se aplican las reglas de vencimiento del contrato. En los contratos actuales, la transferencia cambia quién puede activar la reserva: MUSTER no procesa el pago de reventa ni devuelve automáticamente el dinero al comprador original. Las partes acuerdan entre ellas cualquier compensación.
 
 ## Qué hace
 
-Un proveedor publica, por ejemplo: *«4 unidades de respuesta a incidentes de seguridad ZK, disponibles durante octubre; acepto la activación en un máximo de 30 minutos»*. La oferta se convierte en una posición onchain con dueño, ventana de disponibilidad, precio, plazo de respuesta y colateral.
+Un perito forense podría comprometerse, por ejemplo: *«reservo cuatro horas para respuesta a incidentes entre el 1 y el 31 de octubre y confirmo una activación en un máximo de 30 minutos»*. Los contratos actuales representan estos compromisos como unidades de capacidad con una ventana, un precio, un SLA de respuesta y colateral; no miden las horas de trabajo fuera de la cadena ni certifican credenciales profesionales. La oferta se convierte en una posición onchain con dueño, ventana de disponibilidad, precio, plazo de respuesta y colateral.
 
-El comprador reserva la posición. Si no ocurre ningún incidente, puede transferir la reserva a otra empresa antes del vencimiento. Si necesita el servicio, la activa y empieza a correr el SLA. Si el proveedor no acepta a tiempo, el contrato permite reclamar el colateral según las reglas publicadas.
+El comprador reserva la posición antes de que ocurra un incidente. Si lo necesita durante la ventana acordada, la activa y empieza a correr el SLA de respuesta del proveedor. El colateral respalda ese plazo; no demuestra que el trabajo fuera de la cadena se haya realizado ni que cumpla un estándar de calidad.
 
 ```text
-PUBLICAR → RESERVAR ──┬─ no ocurre el incidente → transferir la reserva
-                      └─ ocurre el incidente    → activar → empieza el SLA
+ANTES DEL CASO          SI EL CASO OCURRE          SI NO HACE FALTA
+reservar un bloque ────▶ activar; empieza el SLA
+                        de respuesta
+                      └─────────────────────────▶ transferir el derecho
+                                                   antes del vencimiento
 ```
 
 | En un acuerdo informal | En MUSTER |
 |---|---|
-| La disponibilidad podría prometerse a más de un cliente | Cada posición solo se puede reservar una vez |
-| Un SLA incumplido puede acabar en una disputa difícil de resolver | El colateral respalda las condiciones y el contrato contempla el default |
-| Una reserva sin uso puede ser un costo hundido | La reserva se puede transferir antes del vencimiento |
-| Durante un incidente se negocia bajo presión | Precio y proveedor quedan fijados al reservar |
+| Salarios o abonos mensuales pagan capacidad aunque quede ociosa | Se reserva un bloque definido para una ventana futura, sin tener al profesional a tiempo completo en espera |
+| Durante el incidente hay que buscar a alguien libre y negociar bajo presión | Proveedor, precio y SLA de respuesta se acuerdan por adelantado |
+| Una reserva sin uso vence sin poder pasarla a otra persona | El derecho a activarla se puede transferir antes del vencimiento; la reventa se acuerda entre compradores |
+| Un único proveedor puede no estar disponible cuando hace falta | `CapacityPool` puede asignar la reserva entre proveedores que aceptaron las mismas condiciones |
+| «Confiá en que estaba disponible» | La cadena registra cuándo se reservó, transfirió, activó, aceptó y liquidó o declaró en default |
 
 ## Cómo funciona
 
@@ -110,3 +105,14 @@ El panel de arbitraje usa direcciones elegidas al publicar la oferta; no incluye
 ## Licencia
 
 Apache-2.0. Consultá [LICENSE](LICENSE).
+
+## Probalo
+
+- **Aplicación web:** [muster-dapp.vercel.app](https://muster-dapp.vercel.app)
+- **Presentación:** [muster-pitch.vercel.app](https://muster-pitch.vercel.app)
+- **Red:** Monad testnet (chain ID 10143)
+- **Código fuente:** [GitHub](https://github.com/annatchijova/muster)
+
+La aplicación permite consultar los contratos sin conectar una wallet. Para enviar transacciones, registrá una passkey desde un navegador compatible; Mera deriva una cuenta para firmar. La cuenta necesita MON de testnet, disponible en el [faucet de Monad](https://faucet.monad.xyz).
+
+La posición #0 es un ejemplo público: se listó, reservó y activó con un SLA de 45 segundos; Chainlink CRE detectó el vencimiento y ejecutó el default. [Ver en el explorer la transacción del reporte CRE](https://testnet.monadexplorer.com/tx/0xf6dc7a5cd0527b52007ac9907070edd00f9f75287f4fdf245ede2a0361300303). La posición quedó en estado Defaulted y el contador de defaults del proveedor puede consultarse en el contrato.
