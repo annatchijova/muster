@@ -1,4 +1,4 @@
-<p align="center"><a href="README.md"><strong>English</strong></a> · <a href="README_ES.md"><strong>Español</strong></a> · <a href="docs/TECHNICAL_README.md"><strong>Technical README</strong></a> (arquitectura, invariantes y evidencia)<br><a href="https://muster-dapp.vercel.app"><strong>→ Aplicación en vivo</strong></a> · <a href="https://muster-pitch.vercel.app"><strong>Página de presentación</strong></a> · <a href="docs/BUSINESS_CASE.md">Caso de negocio</a></p>
+<p align="center"><a href="README.md"><strong>English</strong></a> · <a href="README_ES.md"><strong>Español</strong></a> · <a href="docs/TECHNICAL_README.md"><strong>Technical README</strong></a> (arquitectura, invariantes y evidencia)<br><a href="https://muster-dapp.vercel.app"><strong>→ Aplicación en vivo</strong></a> · <a href="docs/GUIA_DE_USO_ES.md">Guía para jueces y demo</a> · <a href="https://muster-pitch.vercel.app"><strong>Página de presentación</strong></a> · <a href="docs/BUSINESS_CASE.md">Caso de negocio</a></p>
 
 # MUSTER
 
@@ -16,39 +16,6 @@ Conseguir ayuda especializada durante un incidente de seguridad puede ser difíc
 La aplicación permite consultar los contratos sin conectar una wallet. Para enviar transacciones, registrá una passkey desde un navegador compatible; Mera deriva una cuenta para firmar. La cuenta necesita MON de testnet, disponible en el [faucet de Monad](https://faucet.monad.xyz).
 
 La posición #0 es un ejemplo público: se listó, reservó y activó con un SLA de 45 segundos; Chainlink CRE detectó el vencimiento y ejecutó el default. [Ver en el explorer la transacción del reporte CRE](https://testnet.monadexplorer.com/tx/0xf6dc7a5cd0527b52007ac9907070edd00f9f75287f4fdf245ede2a0361300303). La posición quedó en estado Defaulted y el contador de defaults del proveedor puede consultarse en el contrato.
-
-## Guía rápida para jueces y para la demo
-
-### Ver el ejemplo sin conectar una wallet
-
-1. Abrí la [aplicación](https://muster-dapp.vercel.app). Arriba dice **Monad testnet**; no hace falta instalar una extensión de wallet.
-2. En **Market (L1)**, tocá **Refresh** en “Recent positions” y elegí **#0**. También podés escribir `0` en “Position ID” y tocar **Load**.
-3. Vas a ver el estado **Defaulted**, la dirección del proveedor y los datos registrados en la cadena. Abrí el [reporte CRE en Monad Explorer](https://testnet.monadexplorer.com/tx/0xf6dc7a5cd0527b52007ac9907070edd00f9f75287f4fdf245ede2a0361300303) para mostrar la transacción que activó el default.
-4. En **Reputation**, pegá esta dirección para consultar las estadísticas públicas del proveedor de demo: `0xAD35Bed0058774F00Ca44884806a018Db5a51787`. No se necesita wallet ni fondos.
-5. **Pool (L2)** sirve para consultar una clase si ya tenés su `classId` de 32 bytes. Si no tenés uno a mano, seguí con Market y Reputation: son los recorridos preparados con datos públicos concretos.
-
-### Enviar transacciones de prueba
-
-La aplicación apunta a **Monad testnet**. El MON de testnet no es dinero real, pero las transacciones quedan registradas en la cadena y el gas gastado no se recupera. Para una prueba simple, podés usar la misma cuenta como proveedor y comprador; el contrato permite ese recorrido.
-
-Una sola cuenta alcanza para aprender y grabar la interfaz, pero no demuestra una operación entre contrapartes independientes. Si querés probar dos roles separados, usá dos cuentas de testnet distintas y cambiá de passkey según el rol.
-
-1. Tocá **Register new passkey** y completá el diálogo del dispositivo. Guardá el acceso a esa passkey: la app lo necesita para volver a firmar desde ese dispositivo/navegador.
-2. Copiá la dirección que aparece arriba y pedí MON de prueba en el [faucet de Monad](https://faucet.monad.xyz). Esperá a que llegue antes de seguir. Usá una cuenta de demo; no ingreses una clave privada ni fondos de mainnet.
-3. En **List new capacity**, poné un nombre de dominio, por ejemplo `DEMO_SECURITY_RESPONSE`; cantidad `1`; inicio unos minutos antes de ahora; vencimiento al menos una hora después; SLA `300` segundos; ventana de disputa `300` segundos; panel vacío y threshold `0`.
-4. Elegí un precio y un colateral pequeños, pero mayores que cero y acordes al saldo de prueba. Publicar bloquea el colateral en el contrato. Tocá **List capacity** y confirmá la transacción.
-5. En “Recent positions”, abrí la posición nueva. Tocá **Reserve (pay price)** y confirmá el pago del precio; después tocá **Activate**.
-6. Como la misma cuenta publicó la oferta, también puede tocar **Accept activation (provider)** y **Claim delivery (provider)**. En la descripción de evidencia escribí algo como `demo delivery`; la app calcula un hash antes de enviarlo.
-7. Tocá **Settle (buyer approves)**. La posición debería quedar **Settled**. Si una cuenta hizo ambos roles, el contrato devuelve precio y colateral a esa misma dirección al liquidar; el gas de las transacciones sigue siendo un costo.
-
-No uses ese recorrido para afirmar que se prestó un servicio real: el contrato registra la afirmación de entrega y su hash, pero no verifica el trabajo fuera de la cadena. Para el video podés omitir este flujo y mostrar el ejemplo #0, que ya tiene la evidencia CRE en vivo enlazada arriba.
-
-### Preparar el video de mañana
-
-- Abrí la aplicación antes de grabar y dejá cargada la posición **#0**.
-- Tené a mano el link del reporte CRE y la dirección de reputación de arriba.
-- Si querés mostrar transacciones, registrá y fondeá una passkey de testnet antes de grabar; no dependas del faucet durante la toma.
-- Un recorrido corto: explicar el problema, mostrar #0 y su estado, abrir la transacción CRE y cerrar con las estadísticas de reputación. Eso demuestra el producto sin esperar un SLA ni crear datos nuevos durante la grabación.
 
 ## Qué hace
 
