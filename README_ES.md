@@ -22,6 +22,29 @@ reservar un bloque ────▶ activar; empieza el SLA
                                                    antes del vencimiento
 ```
 
+## Más allá de la forense: un mercado para distintos oficios
+
+La forense es el primer ejemplo, no el límite de la idea. El mismo problema
+aparece cuando la demanda es irregular: puede ser difícil justificar un
+salario o abono recurrente, y también encontrar a alguien calificado justo
+cuando hace falta.
+
+| Rubro posible | Ejemplo de capacidad reservable |
+|---|---|
+| Forense y respuesta a incidentes | Un bloque de tiempo de respuesta especializada dentro de una ventana acordada |
+| Contabilidad | Ayuda para un cierre, una auditoría o una fecha límite impositiva sin contratar a alguien de forma permanente |
+| Albañilería y otros oficios | Disponibilidad para una reparación o un trabajo chico con fecha urgente |
+| Otros servicios profesionales | Cualquier servicio cuyas unidades, ventana, precio y condiciones de respuesta puedan acordarse de antemano |
+
+`CapacityPool` permite formar una “bolsa de profesionales”: el comprador
+reserva unidades bajo una misma clase de condiciones y, al activar, el
+contrato puede distribuirlas entre proveedores que aceptaron esas mismas
+condiciones. Un nuevo rubro puede usar otro dominio y otras condiciones sin
+agregar lógica específica para esa profesión. La demo actual ejercita la
+respuesta forense/de seguridad; los demás son rubros posibles, todavía no
+categorías de servicio activas en el despliegue. Los contratos no verifican
+matrículas, horas trabajadas ni calidad de obra: cada mercado debe resolver
+la selección y evaluación de sus profesionales por fuera de la cadena.
 | En un acuerdo informal | En MUSTER |
 |---|---|
 | Salarios o abonos mensuales pagan capacidad aunque quede ociosa | Se reserva un bloque definido para una ventana futura, sin tener al profesional a tiempo completo en espera |

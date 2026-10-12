@@ -48,6 +48,29 @@ reserve a block  ───────▶ activate; response SLA
                                                     before expiry
 ```
 
+## Beyond forensics: one market, many kinds of work
+
+Forensics is the first example, not the boundary of the idea. The same
+availability problem appears wherever demand is irregular: paying a full-time
+salary or recurring retainer can be hard to justify, while finding a qualified
+person at the moment of need can be difficult.
+
+| Potential market | Example of capacity to reserve |
+|---|---|
+| Forensics and incident response | A block of specialist response time during a defined window |
+| Accounting | Help with a closing, audit, or tax deadline without a permanent hire |
+| Building trades | A block of availability for a repair or a small time-sensitive job |
+| Other professional services | Any service whose units, availability window, price, and response terms can be agreed in advance |
+
+`CapacityPool` is the mechanism for a shared “pool of professionals”: a buyer
+reserves units under one terms class, and activation can route them across
+providers who committed to those same terms. A new trade can use a different
+domain and terms without adding profession-specific contract logic. The
+current demo exercises forensic/security response; the other rows are
+potential verticals, not active service categories in the deployed product.
+The contracts do not verify licenses, work hours, or workmanship, so those
+remain part of how each real-world market recruits and evaluates providers.
+
 ## Why a blockchain, specifically
 
 Not because the domain is "crypto" — because the three properties the
