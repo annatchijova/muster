@@ -1,5 +1,7 @@
 # Guía de uso de MUSTER
 
+[English version](USAGE_GUIDE.md).
+
 Guía práctica para jueces, personas que quieran probar la aplicación y quien grabe la demo. La [aplicación](https://muster-dapp.vercel.app) opera en Monad testnet.
 
 ## 1. Explorar los ejemplos sin wallet
