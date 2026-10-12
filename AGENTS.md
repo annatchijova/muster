@@ -7,11 +7,11 @@ hygiene, the abductive reasoning loop, editing discipline, the
 architectural invariants for consequential outputs) — generic, applies to
 every repo. **On conflict, `CLAUDE.md` wins** for discipline/process
 questions (git, verification, patching method); this file wins for
-anything specific to MUSTER's own architecture. In practice they haven't
-conflicted yet except on one point, resolved below: `CLAUDE.md`'s
-English-only repo content rule overrides the `readme-architecture` skill's
-default three-document (EN/ES/Technical) structure — this repo ships
-`README.md` + `docs/TECHNICAL_README.md` only, no `README_ES.md`.
+anything specific to MUSTER's own architecture. The human-facing project
+overview is maintained in English (`README.md`) and Spanish (`README_ES.md`);
+the full technical reference remains in English
+(`docs/TECHNICAL_README.md`). Keep the language links at the top of both
+overview files in sync.
 
 Setup and usage are in [`README.md`](README.md); don't duplicate that here.
 
