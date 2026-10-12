@@ -1,5 +1,7 @@
 <p align="center"><a href="README.md"><strong>English</strong></a> · <a href="README_ES.md"><strong>Español</strong></a> · <a href="docs/TECHNICAL_README.md"><strong>Technical README</strong></a> (arquitectura, invariantes y evidencia)<br><a href="https://muster-dapp.vercel.app"><strong>→ Aplicación en vivo</strong></a> · <a href="docs/USAGE_GUIDE.md">Guía en inglés para jueces</a> · <a href="docs/GUIA_DE_USO_ES.md">Guía en español para revisión</a> · <a href="https://muster-pitch.vercel.app"><strong>Página de presentación</strong></a> · <a href="docs/BUSINESS_CASE.md">Caso de negocio</a></p>
 
+<p align="center"><img src="docs/logo.png" alt="Logo de MUSTER" width="180"></p>
+
 # MUSTER
 
 El problema es **la plata, la disponibilidad y la urgencia**. Tener peritos forenses en relación de dependencia implica pagar salarios aunque no haya un caso que requiera su trabajo. Un abono mensual también cuesta aunque esa disponibilidad quede ociosa. Pero cuando sí ocurre un incidente, quizá no haya nadie disponible; encontrar a alguien mientras el caso avanza obliga a buscar y negociar bajo presión.

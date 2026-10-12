@@ -1,5 +1,7 @@
 <p align="center"><a href="README.md"><strong>English</strong></a> · <a href="README_ES.md"><strong>Español</strong></a> · <a href="docs/TECHNICAL_README.md"><strong>Technical README</strong></a> (architecture, invariants, trust boundary, test evidence)<br><a href="https://muster-dapp.vercel.app"><strong>→ Live product</strong></a> · <a href="docs/USAGE_GUIDE.md">Judge and demo guide</a> · <a href="https://muster-pitch.vercel.app"><strong>Pitch page</strong></a> · <a href="docs/BUSINESS_CASE.md"><strong>Business case</strong></a></p>
 
+<p align="center"><img src="docs/logo.png" alt="MUSTER logo" width="180"></p>
+
 # MUSTER
 
 The problem is **money, availability, and urgency**. Keeping forensic
