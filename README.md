@@ -299,3 +299,11 @@ accessible on GitHub during and after the hackathon.
 ## Pitch deck slides
 
 Browse the [14 presentation slides as PNG images](visual/README.md).
+
+## App screenshots
+
+![MUSTER app screenshot 1](visual/1.png)
+
+![MUSTER app screenshot 2](visual/2.png)
+
+![MUSTER app screenshot 3](visual/3.png)

@@ -145,3 +145,11 @@ La posición #0 es un ejemplo público: se listó, reservó y activó con un SLA
 ## Diapositivas del pitch
 
 Consultá las [14 diapositivas de la presentación en PNG](visual/README.md).
+
+## Capturas de la aplicación
+
+![Captura 1 de MUSTER](visual/1.png)
+
+![Captura 2 de MUSTER](visual/2.png)
+
+![Captura 3 de MUSTER](visual/3.png)
