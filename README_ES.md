@@ -141,3 +141,7 @@ Apache-2.0. Consultá [LICENSE](LICENSE).
 La aplicación permite consultar los contratos sin conectar una wallet. Para enviar transacciones, registrá una passkey desde un navegador compatible; Mera deriva una cuenta para firmar. La cuenta necesita MON de testnet, disponible en el [faucet de Monad](https://faucet.monad.xyz).
 
 La posición #0 es un ejemplo público: se listó, reservó y activó con un SLA de 45 segundos; Chainlink CRE detectó el vencimiento y ejecutó el default. [Ver en el explorer la transacción del reporte CRE](https://testnet.monadexplorer.com/tx/0xf6dc7a5cd0527b52007ac9907070edd00f9f75287f4fdf245ede2a0361300303). La posición quedó en estado Defaulted y el contador de defaults del proveedor puede consultarse en el contrato.
+
+## Diapositivas del pitch
+
+Consultá las [14 diapositivas de la presentación en PNG](visual/README.md).

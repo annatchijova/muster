@@ -295,3 +295,7 @@ without rebuilding the core transaction engine.
 Apache-2.0 — see [`LICENSE`](LICENSE). The Monad Hackathon rules require
 an OSI-approved license (MIT, Apache 2.0, GPL, or similar) kept publicly
 accessible on GitHub during and after the hackathon.
+
+## Pitch deck slides
+
+Browse the [14 presentation slides as PNG images](visual/README.md).
