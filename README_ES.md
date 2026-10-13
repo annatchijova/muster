@@ -153,3 +153,15 @@ Consultá las [14 diapositivas de la presentación en PNG](visual/README.md).
 ![Captura 2 de MUSTER](visual/2.png)
 
 ![Captura 3 de MUSTER](visual/3.png)
+
+![Captura 4 de MUSTER](visual/4.png)
+
+![Captura 5 de MUSTER](<visual/Screenshot from 2026-10-13 17-20-03.png>)
+
+![Captura 6 de MUSTER](<visual/Screenshot from 2026-10-13 17-20-08.png>)
+
+![Captura 7 de MUSTER](<visual/Screenshot from 2026-10-13 17-20-16.png>)
+
+![Captura 8 de MUSTER](<visual/Screenshot from 2026-10-13 17-20-21.png>)
+
+![Captura 9 de MUSTER](<visual/Screenshot from 2026-10-13 17-20-41.png>)

@@ -307,3 +307,15 @@ Browse the [14 presentation slides as PNG images](visual/README.md).
 ![MUSTER app screenshot 2](visual/2.png)
 
 ![MUSTER app screenshot 3](visual/3.png)
+
+![MUSTER app screenshot 4](visual/4.png)
+
+![MUSTER app screenshot 5](<visual/Screenshot from 2026-10-13 17-20-03.png>)
+
+![MUSTER app screenshot 6](<visual/Screenshot from 2026-10-13 17-20-08.png>)
+
+![MUSTER app screenshot 7](<visual/Screenshot from 2026-10-13 17-20-16.png>)
+
+![MUSTER app screenshot 8](<visual/Screenshot from 2026-10-13 17-20-21.png>)
+
+![MUSTER app screenshot 9](<visual/Screenshot from 2026-10-13 17-20-41.png>)
